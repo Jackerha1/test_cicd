@@ -34,6 +34,24 @@ async def call_claude(
     timeout: Optional[float] = None,
 ) -> str:
     """Send a prompt to claude-cli-api and return the raw text reply."""
+    return (await call_claude_with_telemetry(
+        user_prompt=user_prompt, system_prompt=system_prompt,
+        context_lines=context_lines, attachments=attachments, timeout=timeout,
+    ))[0]
+
+
+async def call_claude_with_telemetry(
+    *,
+    user_prompt: str,
+    system_prompt: Optional[str] = None,
+    context_lines: Optional[list[str]] = None,
+    attachments: Optional[list[str]] = None,
+    timeout: Optional[float] = None,
+) -> tuple[str, "CallTelemetry"]:
+    """Same as call_claude but also returns token/cost telemetry."""
+    import time as _t
+    from src.telemetry.tokens import estimate
+
     payload = {
         "message": user_prompt,
         "context": context_lines or [],
@@ -44,6 +62,14 @@ async def call_claude(
         payload["attachments"] = attachments
 
     url = f"{CLAUDE_CLI_API_URL.rstrip('/')}/chat"
+
+    prompt_chars = (
+        len(user_prompt or "")
+        + len(system_prompt or "")
+        + sum(len(c) for c in (context_lines or []))
+    )
+
+    t0 = _t.time()
     try:
         async with httpx.AsyncClient(timeout=timeout or CLAUDE_CALL_TIMEOUT) as cli:
             r = await cli.post(url, json=payload)
@@ -51,11 +77,14 @@ async def call_claude(
             body = r.json()
     except httpx.HTTPError as exc:
         raise ClaudeClientError(f"Claude CLI API call failed: {exc}") from exc
+    dt = _t.time() - t0
 
     reply = body.get("reply_text", "")
     if not isinstance(reply, str):
         raise ClaudeClientError("claude-cli-api returned non-string reply_text")
-    return reply
+
+    telem = estimate(prompt_chars=prompt_chars, reply_chars=len(reply), duration_s=dt)
+    return reply, telem
 
 
 def extract_json(text: str) -> Optional[dict]:

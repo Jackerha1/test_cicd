@@ -21,14 +21,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.agents import (
-    AgentResult, BugFixAgent, CodeReviewAgent, DeploymentAgent,
-    DocumentationAgent, PlannerAgent, SecurityScanAgent, TestWriterAgent,
-    TriageAgent, ValidationAgent,
+    AgentResult, BugFixAgent, CodeReviewAgent, CriticAgent, DeploymentAgent,
+    DocumentationAgent, PlannerAgent, ReflectorAgent, SecurityScanAgent,
+    TestWriterAgent, TriageAgent, ValidationAgent,
 )
 from src.audit import log as audit
 from src.auth.permission import check_event
 from src.config import WORKSPACE_DIR
 from src.context.builder import build as build_context
+from src.memory import archivist
+from src.orchestrator.kernel import Task, run_dag
 from src.policy_engine.engine import classify as classify_risk
 from src.runner.test_runner import run_tests
 from src.tool_proxy import proxy
@@ -46,16 +48,24 @@ class PipelineResult:
     agent_results: dict[str, AgentResult] = field(default_factory=dict)
     tool_calls: list[dict] = field(default_factory=list)
     summary: str = ""
+    critic_scores: dict[str, dict] = field(default_factory=dict)
+    reflector: dict | None = None
+    cost_usd: float = 0.0
+    duration_s: float = 0.0
 
     def to_dict(self) -> dict:
         return {
-            "pipeline_id":  self.pipeline_id,
-            "flow":         self.flow,
-            "final_status": self.final_status,
-            "risk_level":   self.risk_level,
-            "agents":       {k: v.to_dict() for k, v in self.agent_results.items()},
-            "tool_calls":   self.tool_calls,
-            "summary":      self.summary,
+            "pipeline_id":   self.pipeline_id,
+            "flow":          self.flow,
+            "final_status":  self.final_status,
+            "risk_level":    self.risk_level,
+            "agents":        {k: v.to_dict() for k, v in self.agent_results.items()},
+            "tool_calls":    self.tool_calls,
+            "summary":       self.summary,
+            "critic_scores": self.critic_scores,
+            "reflector":     self.reflector,
+            "cost_usd":      round(self.cost_usd, 6),
+            "duration_s":    round(self.duration_s, 3),
         }
 
 
@@ -64,7 +74,10 @@ class PipelineResult:
 # ---------------------------------------------------------------------------
 
 async def run_pipeline(event: Event) -> PipelineResult:
-    """Pick a flow based on the event kind, then execute it."""
+    """Pick a flow, run it, then run post-pipeline reflection + archive hooks."""
+    import time as _t
+
+    t_start = _t.time()
     auth = check_event(event)
     files = event.files_changed or []
     verdict = classify_risk(files, pipeline_id=event.pipeline_id)
@@ -82,24 +95,69 @@ async def run_pipeline(event: Event) -> PipelineResult:
     )
 
     if verdict.block:
-        return PipelineResult(
+        result = PipelineResult(
             pipeline_id=event.pipeline_id, flow="blocked",
             final_status="blocked", risk_level=verdict.risk_level,
             summary=f"Blocked by policy rule {verdict.rule_id}: {verdict.reason}",
         )
+    elif event.kind == "pull_request":
+        result = await _pr_review_flow(event, ctx, verdict)
+    elif event.kind == "issue":
+        result = await _auto_fix_flow(event, ctx, verdict)
+    elif event.kind == "comment":
+        result = await _comment_flow(event, ctx, verdict)
+    else:
+        result = PipelineResult(
+            pipeline_id=event.pipeline_id, flow="unknown",
+            final_status="failed", risk_level=verdict.risk_level,
+            summary=f"unsupported event kind: {event.kind}",
+        )
 
-    if event.kind == "pull_request":
-        return await _pr_review_flow(event, ctx, verdict)
-    if event.kind == "issue":
-        return await _auto_fix_flow(event, ctx, verdict)
-    if event.kind == "comment":
-        return await _comment_flow(event, ctx, verdict)
+    # ---- Karpathy v2 post-hooks: reflection + archive + cost rollup ----
 
-    return PipelineResult(
-        pipeline_id=event.pipeline_id, flow="unknown",
-        final_status="failed", risk_level=verdict.risk_level,
-        summary=f"unsupported event kind: {event.kind}",
+    result.duration_s = _t.time() - t_start
+    result.cost_usd = sum(
+        (ar.telemetry or {}).get("cost_usd", 0.0)
+        for ar in result.agent_results.values()
     )
+
+    if result.final_status in {"blocked", "failed"} and result.agent_results:
+        try:
+            reflector = await ReflectorAgent().run(ctx)
+            if reflector.ok:
+                result.reflector = reflector.output
+                if reflector.telemetry:
+                    result.cost_usd += reflector.telemetry.get("cost_usd", 0.0)
+                audit.log(
+                    pipeline_id=event.pipeline_id, actor="reflector",
+                    action="root_cause", decision="info",
+                    payload=reflector.output,
+                )
+        except Exception as exc:
+            logger.warning("reflector failed: %s", exc)
+
+    try:
+        archivist.archive(
+            pipeline_id=event.pipeline_id,
+            repo=event.repo,
+            event_title=event.title or event.kind,
+            final_status=result.final_status,
+            files_changed=event.files_changed or [],
+            summary=(result.summary or "")[:500],
+            reflector_root_cause=(result.reflector or {}).get("root_cause"),
+        )
+    except Exception as exc:
+        logger.warning("archivist failed: %s", exc)
+
+    # Data flywheel: persist the (event, outcome) example.
+    try:
+        from src.audit.dataset import write_run
+        write_run(pipeline_id=event.pipeline_id,
+                  event=event.dict(), result=result.to_dict())
+    except Exception as exc:
+        logger.warning("dataset writer failed: %s", exc)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -118,25 +176,36 @@ async def _pr_review_flow(event: Event, ctx, verdict) -> PipelineResult:
         return result
     ctx.add_output("triage", triage.output)
 
-    # 2. Security scan
-    sec = await SecurityScanAgent().run(ctx)
+    # 2 + 3. Security scan + Code review run in PARALLEL (LLM-OS kernel).
+    sec_agent = SecurityScanAgent()
+    rev_agent = CodeReviewAgent()
+    dag = await run_dag([
+        Task(name="security_scan", fn=lambda: sec_agent.run(ctx)),
+        Task(name="code_review",   fn=lambda: rev_agent.run(ctx)),
+    ], pipeline_id=event.pipeline_id)
+    sec    = dag["security_scan"]
+    review = dag["code_review"]
     result.agent_results["security_scan"] = sec
+    result.agent_results["code_review"]   = review
     if sec.ok:
         ctx.add_output("security_scan", sec.output)
-
-    # 3. Code review
-    review = await CodeReviewAgent().run(ctx)
-    result.agent_results["code_review"] = review
     if review.ok:
         ctx.add_output("code_review", review.output)
 
-    # 4. Validation
+    # 4. Validation (sequential — needs both prior outputs).
     validation = await ValidationAgent().run(ctx)
     result.agent_results["validation"] = validation
     if validation.ok:
         ctx.add_output("validation", validation.output)
 
-    # 5. Always post a comment with the review summary
+    # 5. Critic grades the Validation verdict (independent LLM-as-judge).
+    if validation.ok:
+        critic = await CriticAgent(target_agent="validation").run(ctx)
+        result.agent_results["critic_validation"] = critic
+        if critic.ok:
+            result.critic_scores["validation"] = critic.output
+
+    # 6. Always post a comment with the review summary
     summary = _build_pr_comment(triage, sec, review, validation)
     comment = proxy.call(
         pipeline_id=event.pipeline_id, agent="orchestrator", action="comment_pr",
@@ -145,7 +214,7 @@ async def _pr_review_flow(event: Event, ctx, verdict) -> PipelineResult:
     )
     result.tool_calls.append({"action": "comment_pr", "ok": comment.ok, "decision": comment.decision})
 
-    # 6. Decide final status
+    # 7. Decide final status
     v = (validation.output or {}).get("verdict") if validation.ok else "block"
     if v == "approve" and not verdict.require_human_approval:
         result.final_status = "approved"

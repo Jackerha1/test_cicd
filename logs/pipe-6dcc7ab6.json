@@ -1,0 +1,278 @@
+{
+  "pipeline_id": "pipe-6dcc7ab6",
+  "flow": "pr_review",
+  "final_status": "blocked",
+  "risk_level": "critical",
+  "agents": {
+    "triage": {
+      "agent": "triage",
+      "ok": true,
+      "output": {
+        "kind": "security",
+        "severity": "critical",
+        "scope": "small",
+        "summary": "PR #215 adds 'none' to jwt.decode() allowed algorithms in src/auth/session.py, enabling unsigned tokens to bypass signature verification. The expiry check is also removed. Policy flagged critical (auth_payment_critical); human approval required.",
+        "suggested_agents": [
+          "security_scan",
+          "code_review",
+          "validation"
+        ],
+        "prompt_injection_suspected": false,
+        "notes": "Author claims 'functionally equivalent' but the diff is a severe security regression. Block merge until human approval."
+      },
+      "error": null,
+      "retries": 1,
+      "telemetry": {
+        "tokens_in": 2420,
+        "tokens_out": 528,
+        "cost_usd": 0.01518,
+        "duration_s": 16.464,
+        "estimated": true
+      }
+    },
+    "security_scan": {
+      "agent": "security_scan",
+      "ok": true,
+      "output": {
+        "findings": [
+          {
+            "severity": "critical",
+            "title": "JWT 'none' Algorithm Allowed \u2014 Authentication Bypass",
+            "file": "src/auth/session.py",
+            "line": 4,
+            "description": "The refactored jwt.decode() call passes algorithms=['RS256','none']. The 'none' algorithm tells PyJWT to accept tokens with no signature, allowing an attacker to forge arbitrary tokens (e.g., with any user ID or elevated role) and bypass authentication entirely. This is a well-known JWT vulnerability (CVE-2015-9235 class). The PR description claims 'functionally equivalent' \u2014 it is not; this is a severe security regression.",
+            "remediation": "Remove 'none' from the algorithms list. Use algorithms=['RS256'] exclusively. Consider also pinning with options={'require': ['exp', 'iat']} to enforce claim presence.",
+            "cwe": "CWE-347: Improper Verification of Cryptographic Signature"
+          },
+          {
+            "severity": "high",
+            "title": "Expiry Check Removed \u2014 Replay Attack Window Opened",
+            "file": "src/auth/session.py",
+            "line": 6,
+            "description": "The original code explicitly checked payload.get('exp', 0) < time.time() and rejected expired tokens. The new code relies solely on PyJWT's built-in exp verification inside the try/except block. If PyJWT is misconfigured (e.g., options={'verify_exp': False}) or a future caller overrides decode options, expired tokens will silently be accepted. The removal of the explicit guard also makes the intent less auditable.",
+            "remediation": "Restore the explicit expiry check after jwt.decode(), or at minimum add options={'require': ['exp']} to the decode call to force PyJWT to always validate expiry.",
+            "cwe": "CWE-613: Insufficient Session Expiration"
+          },
+          {
+            "severity": "medium",
+            "title": "Broad Exception Catch May Mask Unexpected Failures",
+            "file": "src/auth/session.py",
+            "line": 5,
+            "description": "Catching jwt.InvalidTokenError and returning False silently swallows all JWT errors (malformed, wrong key, expired, etc.) as a simple auth failure with no logging. This makes security incidents and misconfiguration harder to detect or alert on.",
+            "remediation": "Log the exception (at WARN or ERROR level, without leaking the raw token) before returning False so that anomalous patterns can be observed in audit logs.",
+            "cwe": "CWE-390: Detection of Error Condition Without Action"
+          }
+        ],
+        "highest_severity": "critical",
+        "recommendation": "block",
+        "new_dependencies": []
+      },
+      "error": null,
+      "retries": 0,
+      "telemetry": {
+        "tokens_in": 1441,
+        "tokens_out": 724,
+        "cost_usd": 0.015183,
+        "duration_s": 15.252,
+        "estimated": true
+      }
+    },
+    "code_review": {
+      "agent": "code_review",
+      "ok": true,
+      "output": {
+        "summary": "PR #215 claims to be a functionally equivalent refactor but introduces two critical security regressions: (1) 'none' is added to jwt.decode's allowed algorithms, enabling unsigned token forgery, and (2) the explicit expiry check is silently dropped. The author's description ('functionally equivalent') is factually wrong. Policy already flagged critical (auth_payment_critical). This must be blocked.",
+        "issues": [
+          {
+            "severity": "blocker",
+            "file": "src/auth/session.py",
+            "line": 5,
+            "comment": "'none' added to jwt.decode algorithms list. The JWT 'none' algorithm means no signature is required; any attacker can craft an arbitrary payload, base64-encode it, and submit it without a signature. Libraries that respect 'none' will accept it as valid. This is the canonical JWT algorithm-confusion attack (CVE-2015-9235). Must be reverted to algorithms=['RS256'] only."
+          },
+          {
+            "severity": "blocker",
+            "file": "src/auth/session.py",
+            "line": 7,
+            "comment": "The expiry check (`if payload.get('exp', 0) < time.time(): return False`) is removed with no explanation. jwt.decode does not enforce 'exp' by default in all library versions; explicitly checking it was a defence-in-depth measure. Its removal means expired tokens are now accepted indefinitely, breaking session revocation and any logout mechanism that relies on token expiry."
+          },
+          {
+            "severity": "major",
+            "file": "tests/auth/test_session.py",
+            "comment": "tests/auth/test_session.py is listed as changed but no diff is visible. Cannot verify whether tests cover the two regressions. Given the nature of the changes, tests for (a) 'none'-algorithm tokens being rejected and (b) expired tokens being rejected are mandatory before any approval."
+          },
+          {
+            "severity": "minor",
+            "file": "src/auth/session.py",
+            "comment": "Adding a try/except around jwt.decode to catch InvalidTokenError is the only defensible change in this diff and should be preserved in a corrected version. However, it does not offset the blockers above."
+          }
+        ],
+        "recommendation": "block",
+        "scope_creep_detected": false
+      },
+      "error": null,
+      "retries": 0,
+      "telemetry": {
+        "tokens_in": 1348,
+        "tokens_out": 622,
+        "cost_usd": 0.013374,
+        "duration_s": 23.579,
+        "estimated": true
+      }
+    },
+    "validation": {
+      "agent": "validation",
+      "ok": true,
+      "output": {
+        "verdict": "block",
+        "checks": [
+          {
+            "name": "test_runner_present_and_passing",
+            "status": "fail",
+            "detail": "No test runner output or CI result is present in any prior agent output. The pipeline context includes no 'status: pass' from a test runner. Code review additionally notes that the tests/auth/test_session.py diff is invisible, so it cannot be confirmed that regressions are covered."
+          },
+          {
+            "name": "patch_files_within_allowed_paths",
+            "status": "skip",
+            "detail": "No planner agent ran in this pipeline and no allowed_paths boundary was set. Check skipped \u2014 cannot confirm or deny scope boundary."
+          },
+          {
+            "name": "security_scan_present",
+            "status": "pass",
+            "detail": "security_scan output is present and complete with findings, severities, and a recommendation."
+          },
+          {
+            "name": "security_scan_no_high_or_critical",
+            "status": "fail",
+            "detail": "security_scan reports highest_severity=critical (JWT 'none' algorithm bypass, CWE-347) and a second finding at high (expiry check removed, CWE-613). Both thresholds independently trigger a mandatory block."
+          },
+          {
+            "name": "security_scan_recommendation_is_not_block",
+            "status": "fail",
+            "detail": "security_scan recommendation is 'block'."
+          },
+          {
+            "name": "code_review_recommendation_is_approve",
+            "status": "fail",
+            "detail": "code_review recommendation is 'block', citing two blocker-severity issues: 'none' algorithm added to jwt.decode and explicit expiry check removed."
+          },
+          {
+            "name": "no_new_dependencies_without_review",
+            "status": "pass",
+            "detail": "security_scan reports new_dependencies: [] \u2014 no new dependencies introduced."
+          },
+          {
+            "name": "bug_fix_agent_confidence_not_low",
+            "status": "skip",
+            "detail": "No bug-fix agent was invoked in this pipeline. Check not applicable."
+          },
+          {
+            "name": "tests_contain_real_assertions",
+            "status": "fail",
+            "detail": "tests/auth/test_session.py is listed as changed but no diff was provided and no test runner executed. Cannot confirm tests assert (a) 'none'-algorithm tokens are rejected and (b) expired tokens are rejected \u2014 both mandatory given the regressions introduced."
+          },
+          {
+            "name": "policy_engine_block_not_overridden",
+            "status": "pass",
+            "detail": "Policy engine set block=False (did not issue a hard block). However it set risk_level=critical and require_human_approval=True under rule auth_payment_critical. No override is being attempted."
+          },
+          {
+            "name": "human_approval_obtained_when_required",
+            "status": "fail",
+            "detail": "Policy engine requires human approval (require_human_approval=True, auth_payment_critical). No human approval record is present in the pipeline context."
+          },
+          {
+            "name": "pr_description_accuracy",
+            "status": "fail",
+            "detail": "PR body claims 'functionally equivalent' \u2014 confirmed false by triage, security_scan, and code_review. The diff introduces a critical authentication bypass and removes an expiry guard. Misleading description is itself a gate concern for an auth-surface PR."
+          }
+        ],
+        "failed_checks": [
+          "test_runner_present_and_passing",
+          "security_scan_no_high_or_critical",
+          "security_scan_recommendation_is_not_block",
+          "code_review_recommendation_is_approve",
+          "tests_contain_real_assertions",
+          "human_approval_obtained_when_required",
+          "pr_description_accuracy",
+          "security_scan.highest_severity=critical",
+          "security_scan.recommendation=block",
+          "code_review.recommendation=block"
+        ],
+        "summary": "Hard block on 6 independent grounds: (1) security scan found critical severity (JWT 'none' algorithm \u2014 auth bypass) and high severity (expiry check removed), (2) security scan recommendation is block, (3) code review recommendation is block with two blocker-severity issues, (4) no test runner output present, (5) policy engine requires human approval which has not been obtained, (6) PR description is factually false ('functionally equivalent'). The patch must not proceed until the 'none' algorithm is removed, the expiry check is restored, tests explicitly cover both regressions, CI passes, and a human reviewer approves the auth-surface change.",
+        "requires_human_approval": true
+      },
+      "error": null,
+      "retries": 0,
+      "telemetry": {
+        "tokens_in": 2761,
+        "tokens_out": 1210,
+        "cost_usd": 0.026433,
+        "duration_s": 29.58,
+        "estimated": true
+      }
+    },
+    "critic_validation": {
+      "agent": "critic",
+      "ok": true,
+      "output": {
+        "target_agent": "validation",
+        "score_overall": 9,
+        "subscores": {
+          "correctness": 9,
+          "scope_discipline": 9,
+          "evidence_use": 10,
+          "output_quality": 9
+        },
+        "failure_modes": [
+          "none"
+        ],
+        "reasoning": "The validation agent correctly synthesized all prior agent outputs and issued a well-justified 'block' verdict. Correctness (9/10): Every failed check is grounded in concrete upstream evidence \u2014 security_scan's highest_severity=critical, code_review's two blocker-severity findings, absent test runner output, and policy engine's require_human_approval=True with no approval record. The pr_description_accuracy check is a non-standard but defensible gate for a misleading auth-surface PR description. The one deduction is that 'failed_checks' lists some items twice in different forms (e.g., 'security_scan_no_high_or_critical' and 'security_scan.highest_severity=critical'), creating minor redundancy without adding signal. Scope_discipline (9/10): The agent ran exactly the checks appropriate for this pipeline stage \u2014 it did not re-run security analysis or invent new findings, only cross-checked prior outputs against hard rules. The 'patch_files_within_allowed_paths' skip is correctly reasoned (no planner ran, no boundary set). Evidence_use (10/10): Every check cites a specific field from a specific prior agent output (e.g., 'security_scan reports new_dependencies: []', 'code_review recommendation is block, citing two blocker-severity issues'). No hallucinated findings. Output_quality (9/10): The check list is comprehensive and well-structured. The summary field appears truncated in the provided context (ends mid-sentence after '(4) no test runner output present,'), which is a minor presentation defect \u2014 likely an artifact of context truncation rather than agent error, but noted. Overall a high-quality, evidence-grounded validation output with no overconfidence, no scope creep, and correct final verdict."
+      },
+      "error": null,
+      "retries": 0,
+      "telemetry": {
+        "tokens_in": 3918,
+        "tokens_out": 559,
+        "cost_usd": 0.020139,
+        "duration_s": 12.896,
+        "estimated": true
+      }
+    }
+  },
+  "tool_calls": [
+    {
+      "action": "comment_pr",
+      "ok": true,
+      "decision": "auto"
+    }
+  ],
+  "summary": "## AI-CICD review\n\n**Triage**: kind=security, severity=critical, scope=small\n**Security**: highest_severity=critical, recommendation=block (3 findings)\n**Code review**: recommendation=block (4 comments)\n**Validation**: verdict=**block**\nFailed checks:\n- test_runner_present_and_passing\n- security_scan_no_high_or_critical\n- security_scan_recommendation_is_not_block\n- code_review_recommendation_is_approve\n- tests_contain_real_assertions\n- human_approval_obtained_when_required\n- pr_description_accuracy\n- security_scan.highest_severity=critical\n- security_scan.recommendation=block\n- code_review.recommendation=block",
+  "critic_scores": {
+    "validation": {
+      "target_agent": "validation",
+      "score_overall": 9,
+      "subscores": {
+        "correctness": 9,
+        "scope_discipline": 9,
+        "evidence_use": 10,
+        "output_quality": 9
+      },
+      "failure_modes": [
+        "none"
+      ],
+      "reasoning": "The validation agent correctly synthesized all prior agent outputs and issued a well-justified 'block' verdict. Correctness (9/10): Every failed check is grounded in concrete upstream evidence \u2014 security_scan's highest_severity=critical, code_review's two blocker-severity findings, absent test runner output, and policy engine's require_human_approval=True with no approval record. The pr_description_accuracy check is a non-standard but defensible gate for a misleading auth-surface PR description. The one deduction is that 'failed_checks' lists some items twice in different forms (e.g., 'security_scan_no_high_or_critical' and 'security_scan.highest_severity=critical'), creating minor redundancy without adding signal. Scope_discipline (9/10): The agent ran exactly the checks appropriate for this pipeline stage \u2014 it did not re-run security analysis or invent new findings, only cross-checked prior outputs against hard rules. The 'patch_files_within_allowed_paths' skip is correctly reasoned (no planner ran, no boundary set). Evidence_use (10/10): Every check cites a specific field from a specific prior agent output (e.g., 'security_scan reports new_dependencies: []', 'code_review recommendation is block, citing two blocker-severity issues'). No hallucinated findings. Output_quality (9/10): The check list is comprehensive and well-structured. The summary field appears truncated in the provided context (ends mid-sentence after '(4) no test runner output present,'), which is a minor presentation defect \u2014 likely an artifact of context truncation rather than agent error, but noted. Overall a high-quality, evidence-grounded validation output with no overconfidence, no scope creep, and correct final verdict."
+    }
+  },
+  "reflector": {
+    "root_cause": "failed_security_scan",
+    "summary": "The patch adds 'none' to the JWT decode algorithms list (CWE-347), enabling unsigned token forgery \u2014 a critical authentication bypass. The security_scan agent correctly flagged this as critical and recommended block. All downstream agents (code_review, validation) agreed. The policy engine also required human approval under auth_payment_critical. The pipeline blocked because the patch itself introduces a severe security regression, not due to any process or tooling failure.",
+    "suggested_fix": {
+      "kind": "prompt_edit",
+      "target": "prompts/code_review.md",
+      "description": "Add an explicit instruction: when the PR description claims 'functionally equivalent' but the diff touches an auth/crypto surface, require the reviewer to produce a line-by-line equivalence check and call out any algorithm, option, or guard removal as a presumptive blocker. This catches the mismatch between author claim and actual diff earlier in the pipeline, before security_scan must do the heavy lifting."
+    },
+    "confidence": "high"
+  },
+  "cost_usd": 0.107079,
+  "duration_s": 82.573
+}

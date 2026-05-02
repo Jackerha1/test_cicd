@@ -102,5 +102,127 @@ def audit_dump(pipeline_id: str) -> None:
     console.print(t)
 
 
+# =============================================================================
+# Karpathy v2 commands: eval, cost, trifecta-audit, memory
+# =============================================================================
+
+@app.command("eval")
+def eval_cmd(only_agent: str = typer.Option(None, "--agent", "-a",
+                                            help="Run only cases for this agent.")) -> None:
+    """Run the eval harness against `evals/cases/*.yaml` and print pass/fail."""
+    from evals.harness import run_all_sync, write_report
+    results = run_all_sync(only_agent=only_agent)
+    if not results:
+        console.print("[yellow]No eval cases found.[/]")
+        return
+
+    t = Table("case", "agent", "status", "checks", "duration", "fail_msg")
+    passed = 0
+    for r in results:
+        status = "[green]PASS[/]" if r.passed else "[red]FAIL[/]"
+        if r.passed:
+            passed += 1
+        checks = f"{r.pass_count}/{r.pass_count + r.fail_count}"
+        fail = (r.failures[0] if r.failures else (r.agent_error or ""))[:60]
+        t.add_row(r.name, r.agent, status, checks, f"{r.duration_s:.1f}s", fail)
+    console.print(t)
+    console.print(f"\n[bold]{passed}/{len(results)} cases passed[/]")
+    write_report(results, ROOT / "logs" / "eval_latest.json")
+    if passed != len(results):
+        sys.exit(2)
+
+
+@app.command("cost")
+def cost(pipeline_id: str) -> None:
+    """Token / latency / USD breakdown for a pipeline run."""
+    rows = audit.fetch_pipeline(pipeline_id)
+    if not rows:
+        console.print(f"[yellow]No audit rows for {pipeline_id}[/]")
+        return
+
+    # Totals from per-agent agent_done telemetry payloads.
+    by_agent: dict[str, dict] = {}
+    for r in rows:
+        if r["action"] in {"agent_done", "agent_failed"} and r["payload"]:
+            telem = (r["payload"].get("telemetry") or {})
+            if not telem:
+                continue
+            cur = by_agent.setdefault(r["actor"], {"tokens_in": 0, "tokens_out": 0,
+                                                    "cost_usd": 0.0, "duration_s": 0.0})
+            cur["tokens_in"]  += telem.get("tokens_in", 0)
+            cur["tokens_out"] += telem.get("tokens_out", 0)
+            cur["cost_usd"]   += telem.get("cost_usd", 0.0)
+            cur["duration_s"] += telem.get("duration_s", 0.0)
+
+    if not by_agent:
+        console.print(f"[yellow]No telemetry rows for {pipeline_id} (older run?).[/]")
+        return
+
+    t = Table("agent", "tokens_in", "tokens_out", "cost_usd", "duration_s")
+    tot_in = tot_out = 0
+    tot_cost = tot_dur = 0.0
+    for agent, m in sorted(by_agent.items()):
+        t.add_row(agent, str(m["tokens_in"]), str(m["tokens_out"]),
+                  f"${m['cost_usd']:.5f}", f"{m['duration_s']:.2f}s")
+        tot_in += m["tokens_in"]; tot_out += m["tokens_out"]
+        tot_cost += m["cost_usd"]; tot_dur += m["duration_s"]
+    t.add_row("[bold]TOTAL[/]", str(tot_in), str(tot_out),
+              f"[bold]${tot_cost:.5f}[/]", f"[bold]{tot_dur:.2f}s[/]")
+    console.print(t)
+    console.print("[dim]Estimates from char-count heuristic; not provider-reported.[/]")
+
+
+@app.command("trifecta-audit")
+def trifecta_audit() -> None:
+    """Static analysis of approval matrix vs the lethal-trifecta rule."""
+    from src.audit.trifecta import audit_trifecta
+    findings = audit_trifecta()
+    t = Table("agent", "untrusted_input", "private_data", "exfiltrate", "legs", "lethal?")
+    lethal_count = 0
+    for f in findings:
+        mark = "[red]LETHAL[/]" if f.lethal else ("[yellow]2/3[/]" if f.legs == 2 else "[green]ok[/]")
+        if f.lethal:
+            lethal_count += 1
+        t.add_row(
+            f.agent,
+            "yes" if f.has_untrusted_input else "no",
+            "yes" if f.has_private_data else "no",
+            "yes" if f.can_exfiltrate else "no",
+            str(f.legs),
+            mark,
+        )
+    console.print(t)
+    if lethal_count:
+        console.print(f"[red bold]{lethal_count} lethal-trifecta agent(s) detected — refusing.[/]")
+        sys.exit(2)
+    console.print("[green]No lethal-trifecta agents.[/]")
+
+
+@app.command("memory")
+def memory_show(repo: str) -> None:
+    """Show the per-repo learned memory injected into context."""
+    from src.memory import store
+    m = store.load(repo)
+    if not m or list(m.keys()) == ["repo"]:
+        console.print(f"[yellow]No memory for repo {repo!r} yet.[/]")
+        return
+    console.print_json(data=m)
+
+
+@app.command("reflect")
+def reflect(pipeline_id: str) -> None:
+    """Print the Reflector Agent's root-cause for a (failed/blocked) run."""
+    p = ROOT / "logs" / f"{pipeline_id}.json"
+    if not p.exists():
+        console.print(f"[yellow]No result file for {pipeline_id}[/]")
+        return
+    data = json.loads(p.read_text())
+    refl = data.get("reflector")
+    if not refl:
+        console.print("[yellow]No reflector output (run probably succeeded).[/]")
+        return
+    console.print_json(data=refl)
+
+
 if __name__ == "__main__":
     app()

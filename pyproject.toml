@@ -17,4 +17,10 @@ dependencies = [
 ai-cicd = "src.cli:app"
 
 [tool.setuptools]
-packages = ["src"]
+packages = [
+  "src",
+  "src.agents", "src.audit", "src.auth", "src.context", "src.memory",
+  "src.orchestrator", "src.policy_engine", "src.runner", "src.sandbox",
+  "src.telemetry", "src.tool_proxy", "src.trigger", "src.approval",
+  "evals",
+]

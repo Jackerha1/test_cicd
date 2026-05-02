@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reflector",
+  "type": "object",
+  "required": ["root_cause", "summary", "suggested_fix"],
+  "properties": {
+    "root_cause": {
+      "enum": ["bug_in_patch", "scope_violation", "failed_security_scan",
+                "failed_test_runner", "prompt_injection", "policy_block",
+                "agent_hallucination", "agent_format_error",
+                "validation_disagreement", "infrastructure_error"]
+    },
+    "summary": {"type": "string"},
+    "suggested_fix": {
+      "type": "object",
+      "required": ["kind", "target", "description"],
+      "properties": {
+        "kind":        {"enum": ["prompt_edit", "policy_edit", "schema_edit", "no_action"]},
+        "target":      {"type": "string", "description": "e.g. 'prompts/bug_fix.md' or 'policies/risk_rules.yaml'"},
+        "description": {"type": "string"}
+      }
+    },
+    "confidence": {"enum": ["low", "medium", "high"]}
+  }
+}

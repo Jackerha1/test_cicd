@@ -22,7 +22,7 @@ from typing import Any, Optional
 import jsonschema
 
 from src.audit import log as audit
-from src.claude_client import ClaudeClientError, call_claude, extract_json
+from src.claude_client import ClaudeClientError, call_claude_with_telemetry, extract_json
 from src.config import MAX_AGENT_RETRIES, PROMPTS_DIR, SCHEMAS_DIR
 from src.context.builder import ContextBundle
 
@@ -37,6 +37,7 @@ class AgentResult:
     error: Optional[str] = None
     raw_reply: Optional[str] = None
     retries: int = 0
+    telemetry: Optional[dict] = None   # accumulated tokens/cost across attempts
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +46,7 @@ class AgentResult:
             "output": self.output,
             "error": self.error,
             "retries": self.retries,
+            "telemetry": self.telemetry,
         }
 
 
@@ -102,6 +104,10 @@ class BaseAgent:
 
         last_error: Optional[str] = None
         last_raw: Optional[str] = None
+        agg_tokens_in = 0
+        agg_tokens_out = 0
+        agg_cost = 0.0
+        agg_duration = 0.0
 
         for attempt in range(MAX_AGENT_RETRIES + 1):
             user_prompt = self.build_user_prompt(ctx)
@@ -115,7 +121,7 @@ class BaseAgent:
             full_user = f"{user_prompt}\n\n{self.schema_reminder()}"
 
             try:
-                raw = await call_claude(
+                raw, telem = await call_claude_with_telemetry(
                     user_prompt=full_user,
                     system_prompt=self.system_prompt,
                     context_lines=ctx.for_agent(self.name),
@@ -124,6 +130,16 @@ class BaseAgent:
                 last_error = f"claude_call_failed: {exc}"
                 last_raw = None
                 continue
+
+            agg_tokens_in += telem.tokens_in
+            agg_tokens_out += telem.tokens_out
+            agg_cost += telem.cost_usd
+            agg_duration += telem.duration_s
+            audit.log(
+                pipeline_id=ctx.pipeline_id, actor=self.name,
+                action="claude_call", decision="info",
+                payload={"attempt": attempt, **telem.to_dict()},
+            )
 
             last_raw = raw
             output = extract_json(raw)
@@ -142,22 +158,38 @@ class BaseAgent:
                 last_error = extra
                 continue
 
+            telemetry_total = {
+                "tokens_in":  agg_tokens_in,
+                "tokens_out": agg_tokens_out,
+                "cost_usd":   round(agg_cost, 6),
+                "duration_s": round(agg_duration, 3),
+                "estimated":  True,
+            }
             audit.log(
                 pipeline_id=ctx.pipeline_id,
                 actor=self.name,
                 action="agent_done",
                 decision="success",
-                payload={"retries": attempt},
+                payload={"retries": attempt, "telemetry": telemetry_total},
             )
             return AgentResult(agent=self.name, ok=True, output=output,
-                               raw_reply=raw, retries=attempt)
+                               raw_reply=raw, retries=attempt,
+                               telemetry=telemetry_total)
 
+        telemetry_total = {
+            "tokens_in":  agg_tokens_in,
+            "tokens_out": agg_tokens_out,
+            "cost_usd":   round(agg_cost, 6),
+            "duration_s": round(agg_duration, 3),
+            "estimated":  True,
+        }
         audit.log(
             pipeline_id=ctx.pipeline_id,
             actor=self.name,
             action="agent_failed",
             decision="error",
-            payload={"error": last_error, "retries": MAX_AGENT_RETRIES},
+            payload={"error": last_error, "retries": MAX_AGENT_RETRIES, "telemetry": telemetry_total},
         )
         return AgentResult(agent=self.name, ok=False, error=last_error,
-                           raw_reply=last_raw, retries=MAX_AGENT_RETRIES)
+                           raw_reply=last_raw, retries=MAX_AGENT_RETRIES,
+                           telemetry=telemetry_total)

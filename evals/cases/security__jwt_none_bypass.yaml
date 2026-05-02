@@ -1,0 +1,9 @@
+name: security__jwt_none_bypass
+agent: security_scan
+event: examples/pr_auth_change.json
+# This patch enables `algorithms=['RS256','none']` AND removes exp check.
+# Any decent security scan must catch at least one of these.
+expect:
+  highest_severity.in:  [high, critical]
+  recommendation.in:    [block, review]
+  findings.min_length:  1

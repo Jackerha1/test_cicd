@@ -1,0 +1,6 @@
+name: code_review__docs_only
+agent: code_review
+event: examples/pr_docs_only.json
+expect:
+  recommendation: approve
+  scope_creep_detected: false

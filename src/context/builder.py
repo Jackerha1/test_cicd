@@ -37,6 +37,7 @@ class ContextBundle:
     repo_layout: str = ""
     prior_outputs: dict[str, Any] = field(default_factory=dict)
     policy_verdict: Optional[dict] = None
+    memory: Optional[dict] = None        # per-repo learned facts, injected from src/memory/store.py
 
     def add_output(self, agent_name: str, output: Any) -> None:
         self.prior_outputs[agent_name] = output
@@ -72,6 +73,20 @@ class ContextBundle:
             lines.append("## Coding rules")
             lines.append(self.coding_rules)
             lines.append("")
+        if self.memory:
+            lines.append("## Repo memory (learned from past pipelines)")
+            if self.memory.get("conventions"):
+                lines.append("### Conventions")
+                lines.append(self.memory["conventions"])
+            if self.memory.get("pitfalls"):
+                lines.append("### Pitfalls (recurring mistakes — avoid)")
+                lines.append(self.memory["pitfalls"])
+            if self.memory.get("past_patches"):
+                lines.append("### Recent patches in this repo")
+                import json as _j
+                for p in self.memory["past_patches"][-5:]:  # cap context
+                    lines.append(f"- {p.get('issue_title')!r} ({p.get('verdict')}) → {p.get('files_changed')}")
+            lines.append("")
         if self.policy_verdict:
             lines.append("## Policy verdict (deterministic)")
             for k, v in self.policy_verdict.items():
@@ -101,11 +116,15 @@ def _redact(text: str) -> str:
 
 def build(event: Event, *, trusted: bool, repo_root: Optional[Path] = None) -> ContextBundle:
     """Construct a context bundle for a fresh pipeline run."""
+    from src.memory import store as memory_store
+
     root = repo_root or ROOT
     coding_rules = ""
     rules_file = root / "CONVENTIONS.md"
     if rules_file.exists():
         coding_rules = rules_file.read_text()[:2000]
+
+    memory = memory_store.load(event.repo) if event.repo else None
 
     bundle = ContextBundle(
         pipeline_id=event.pipeline_id,
@@ -113,6 +132,7 @@ def build(event: Event, *, trusted: bool, repo_root: Optional[Path] = None) -> C
         trusted=trusted,
         repo_root=root,
         coding_rules=coding_rules,
+        memory=memory,
     )
     audit.log(
         pipeline_id=event.pipeline_id,
@@ -120,6 +140,10 @@ def build(event: Event, *, trusted: bool, repo_root: Optional[Path] = None) -> C
         action="bundle_built",
         target=str(event.repo),
         decision="info",
-        payload={"diff_chars": len(event.diff), "files": len(event.files_changed)},
+        payload={
+            "diff_chars": len(event.diff),
+            "files": len(event.files_changed),
+            "memory_keys": list((memory or {}).keys()),
+        },
     )
     return bundle

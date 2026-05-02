@@ -1,0 +1,13 @@
+# An eval case = a fixed input + the fields we expect on the output.
+# The harness runs the agent and grades each `expect:` rule pass/fail.
+# Karpathy mindset: if you can't grade it, you can't improve it.
+
+name: triage__login_bug
+agent: triage
+event: examples/issue_login_bug.json
+expect:
+  kind:                bug
+  severity:            high           # auth-related bug
+  prompt_injection_suspected: false
+  suggested_agents.contains: bug_fix
+  suggested_agents.contains: test_writer

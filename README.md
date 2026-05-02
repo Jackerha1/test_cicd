@@ -1,5 +1,11 @@
 # AI-Powered CI/CD
 
+> **v2 — Karpathy lens applied**: eval harness, token/cost telemetry, Critic
+> + Reflector agents, per-repo memory, LLM-OS parallel kernel, lethal-trifecta
+> auditor, data flywheel. See [the v2 section below](#v2--karpathy-style-extensions)
+> or [ARCHITECTURE.md](ARCHITECTURE.md).
+
+
 A multi-agent CI/CD pipeline that processes GitHub-style issues, pull requests
 and comments through 9 specialised agents — **inside a hardened control
 hallway**: deterministic policy gates, scope enforcement, secret redaction,
@@ -195,3 +201,93 @@ MVP / demo. All deploys, PRs, and merges are **simulated** to local files
 under `artifacts/<pipeline_id>/`. To turn this into production, replace the
 functions in `src/tool_proxy/tools.py` with real `gh` / `kubectl` /
 cloud-provider calls — the surrounding gating already works.
+
+---
+
+## v2 — Karpathy-style extensions
+
+The v1 system above is the "make it work" layer. v2 is the "make it
+**measurable, learning, and instrumented**" layer, designed around five
+Karpathy reflexes:
+
+| Karpathy reflex | v2 module |
+|---|---|
+| *"Evals are king."* | **Eval Harness** — `evals/cases/*.yaml` + `evals/harness.py` + `ai-cicd eval` |
+| *"Tokens are money & latency."* | **Token telemetry** — `src/telemetry/tokens.py` wraps `claude_client`, audit DB stores per-call usage, `ai-cicd cost <pipeline_id>` |
+| *"LLM-as-judge & reflection."* | **Critic + Reflector agents** — `src/agents/critic.py`, `src/agents/reflector.py` with prompts + schemas |
+| *"Data flywheel — every run produces training data."* | **Memory layer + Archivist** — `memory/<repo>/{conventions,past_patches,pitfalls}` injected into context; `data/runs/*.json` for fine-tune/eval replay |
+| *"LLM as OS."* | **Kernel scheduler** — `src/orchestrator/kernel.py` runs DAG nodes in parallel when independent (Security + Code-Review now fan out) |
+| *"Lethal trifecta defense."* | **Trifecta auditor** — `src/audit/trifecta.py` + `ai-cicd trifecta-audit` static-checks the approval matrix |
+
+### v2 commands
+
+```bash
+ai-cicd eval                        # run all eval cases
+ai-cicd eval --agent triage         # only triage cases
+ai-cicd cost <pipeline_id>          # per-agent tokens / USD / latency
+ai-cicd trifecta-audit              # static check: any agent with all 3 legs?
+ai-cicd memory <repo>               # what the system has learned about this repo
+ai-cicd reflect <pipeline_id>       # the Reflector's root-cause for a failed/blocked run
+```
+
+### Try the flywheel
+
+```bash
+# Run a risky PR — pipeline blocks, Reflector explains why, Archivist remembers
+ai-cicd run examples/pr_auth_change.json
+ai-cicd reflect <pipeline_id>            # → root_cause: failed_security_scan + suggested fix
+ai-cicd cost <pipeline_id>               # → per-agent token + USD breakdown
+ai-cicd memory demo-org/demo-app          # → past_patches + pitfalls accumulated
+
+# Run the eval harness — measure if your prompt edits improved things
+ai-cicd eval                              # → grade every case in evals/cases/
+```
+
+### Telemetry shape
+
+Per-agent usage is logged to the audit DB on every call:
+
+```json
+{"attempt": 0, "tokens_in": 1804, "tokens_out": 714,
+ "cost_usd": 0.016215, "duration_s": 12.83, "estimated": true}
+```
+
+Token counts are character-heuristic estimates (`~3.5 chars/token`); they're
+flagged `estimated: true` so you don't confuse them with provider-reported
+usage. Swap `src/telemetry/tokens.py` with the real provider envelope when
+the API exposes it.
+
+### Parallel agent execution
+
+The PR-review flow used to be linear. v2 fans out independent agents:
+
+```
+Triage ──► Security Scan  ┐
+       └─► Code Review   ─┴──► Validation ──► Critic ──► comment_pr
+```
+
+Security and Code Review run concurrently via `kernel.run_dag([...])`. Adding
+new parallel branches is one `Task(name=..., fn=..., deps=[...])` away.
+
+### Lethal Trifecta — formalized
+
+Karpathy's framing: an AI agent is dangerous when it has all three of
+`(untrusted input, private data, exfiltration)`. `ai-cicd trifecta-audit`
+prints a per-agent table and refuses to start if any agent holds all three.
+This system intentionally gives **no agent** access to private data, so
+nobody hits the lethal trifecta — that's an architecture invariant, not a
+runtime hope.
+
+### Files added in v2
+
+```
+prompts/critic.md   prompts/reflector.md
+schemas/critic.json  schemas/reflector.json
+src/telemetry/tokens.py
+src/agents/critic.py  src/agents/reflector.py
+src/memory/store.py  src/memory/archivist.py
+src/orchestrator/kernel.py
+src/audit/trifecta.py
+src/audit/dataset.py
+evals/harness.py    evals/cases/*.yaml
+```
