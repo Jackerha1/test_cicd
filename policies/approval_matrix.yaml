@@ -1,0 +1,42 @@
+# Decides what action an agent (or the orchestrator) is allowed to take
+# at each risk level. Acted on by the Tool Proxy.
+
+# Possible actions:
+#   create_branch, write_file, commit, push_branch,
+#   open_pr, comment_pr, merge_pr,
+#   deploy_staging, deploy_canary, deploy_production, rollback
+
+risk_actions:
+  low:
+    auto: [create_branch, write_file, commit, push_branch, open_pr, comment_pr, deploy_staging]
+    require_approval: [merge_pr, deploy_canary, deploy_production]
+    forbidden: []
+
+  medium:
+    auto: [create_branch, write_file, commit, push_branch, open_pr, comment_pr]
+    require_approval: [merge_pr, deploy_staging, deploy_canary, deploy_production]
+    forbidden: []
+
+  high:
+    auto: [create_branch, write_file, commit, push_branch, comment_pr]
+    require_approval: [open_pr, merge_pr, deploy_staging, deploy_canary, deploy_production]
+    forbidden: []
+
+  critical:
+    auto: [create_branch, write_file, commit, comment_pr]
+    require_approval: [push_branch, open_pr, merge_pr, deploy_staging, deploy_canary]
+    forbidden: [deploy_production]
+
+# Per-agent capability ceiling (a SECOND filter on top of risk).
+# An agent can NEVER do an action not listed here, even if risk allows it.
+agent_capabilities:
+  triage:        [comment_pr]
+  planner:       []
+  bug_fix:       [create_branch, write_file, commit]
+  test_writer:   [create_branch, write_file, commit]
+  documentation: [create_branch, write_file, commit]
+  security_scan: [comment_pr]
+  code_review:   [comment_pr]
+  validation:    [comment_pr]                                   # can approve a bundle, never merges
+  deployment:    [deploy_staging, deploy_canary, deploy_production, rollback]
+  orchestrator:  [push_branch, open_pr, merge_pr, comment_pr]   # only the orchestrator does git remote ops

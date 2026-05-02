@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecurityScan",
+  "type": "object",
+  "required": ["findings", "highest_severity", "recommendation"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "title", "file", "description"],
+        "properties": {
+          "severity":    {"enum": ["info", "low", "medium", "high", "critical"]},
+          "title":       {"type": "string"},
+          "file":        {"type": "string"},
+          "line":        {"type": "integer"},
+          "description": {"type": "string"},
+          "remediation": {"type": "string"},
+          "cwe":         {"type": "string"}
+        }
+      }
+    },
+    "highest_severity": {"enum": ["info", "low", "medium", "high", "critical", "none"]},
+    "recommendation":   {"enum": ["allow", "review", "block"]},
+    "new_dependencies": {"type": "array", "items": {"type": "string"}}
+  }
+}

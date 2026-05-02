@@ -1,0 +1,11 @@
+# Authors / installations whose events the Trigger Layer will accept.
+# Anyone not on this list (and not internal) gets `untrusted: true` in the
+# context, which forces stricter policy on downstream agents.
+trusted_authors:
+  - "HuyTK"
+  - "internal-bot"
+  - "dependabot[bot]"
+
+# Bot accounts whose comments are allowed to issue commands like /ai fix.
+trusted_bots:
+  - "internal-bot"

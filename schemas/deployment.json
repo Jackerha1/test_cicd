@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Deployment",
+  "type": "object",
+  "required": ["target", "stages", "final_status"],
+  "properties": {
+    "target": {"enum": ["staging", "canary", "production", "rollback"]},
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name":     {"enum": ["staging", "canary", "full", "rollback"]},
+          "status":   {"enum": ["pending", "running", "passed", "failed", "skipped"]},
+          "metrics":  {"type": "object"},
+          "duration_s": {"type": "number"}
+        }
+      }
+    },
+    "final_status": {"enum": ["deployed", "rolled_back", "blocked", "incident"]},
+    "incident":     {"type": "boolean", "default": false},
+    "summary":      {"type": "string"}
+  }
+}

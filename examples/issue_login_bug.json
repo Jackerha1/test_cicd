@@ -1,0 +1,12 @@
+{
+  "kind": "issue",
+  "action": "opened",
+  "repo": "demo-org/demo-app",
+  "number": 101,
+  "title": "Login fails when password contains special characters",
+  "body": "Steps to reproduce:\n1. Register a user with password 'p@ss!w0rd#'.\n2. Try to log in.\n3. Login returns 401 even though credentials are correct.\n\nExpected: login succeeds.\nObserved: 401 Unauthorized.\n\nWe think the bug is in src/auth/login.py — the password is being URL-decoded twice, which mangles special characters.",
+  "author": "HuyTK",
+  "files_changed": [],
+  "diff": "",
+  "labels": ["bug", "auth"]
+}

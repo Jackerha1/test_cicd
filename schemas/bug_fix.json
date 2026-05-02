@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BugFix",
+  "type": "object",
+  "required": ["patch", "files_changed", "confidence", "summary"],
+  "properties": {
+    "patch": {
+      "type": "string",
+      "description": "Unified-diff text patch."
+    },
+    "files_changed": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "summary": {"type": "string"},
+    "notes": {
+      "type": "object",
+      "properties": {
+        "new_dependencies": {"type": "array", "items": {"type": "string"}},
+        "assumptions": {"type": "string"}
+      }
+    }
+  }
+}

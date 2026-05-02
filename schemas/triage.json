@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Triage",
+  "type": "object",
+  "required": ["kind", "severity", "scope", "summary", "suggested_agents"],
+  "properties": {
+    "kind": {"enum": ["bug", "feature", "docs", "chore", "security", "question"]},
+    "severity": {"enum": ["low", "medium", "high", "critical"]},
+    "scope": {"enum": ["tiny", "small", "medium", "large"]},
+    "summary": {"type": "string", "maxLength": 500},
+    "suggested_agents": {
+      "type": "array",
+      "items": {"enum": ["planner", "bug_fix", "test_writer", "security_scan", "code_review", "documentation", "validation", "deployment"]}
+    },
+    "prompt_injection_suspected": {"type": "boolean", "default": false},
+    "notes": {"type": "string"}
+  }
+}

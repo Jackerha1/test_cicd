@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Validation",
+  "type": "object",
+  "required": ["verdict", "checks", "summary"],
+  "properties": {
+    "verdict": {"enum": ["approve", "request_changes", "block"]},
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name":   {"type": "string"},
+          "status": {"enum": ["pass", "fail", "skip"]},
+          "detail": {"type": "string"}
+        }
+      }
+    },
+    "failed_checks": {"type": "array", "items": {"type": "string"}},
+    "summary":       {"type": "string"},
+    "requires_human_approval": {"type": "boolean", "default": false}
+  }
+}

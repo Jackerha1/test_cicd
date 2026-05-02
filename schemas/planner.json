@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Planner",
+  "type": "object",
+  "required": ["tasks", "allowed_paths"],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "agent", "description"],
+        "properties": {
+          "id": {"type": "string"},
+          "agent": {"enum": ["bug_fix", "test_writer", "security_scan", "code_review", "documentation"]},
+          "description": {"type": "string"},
+          "depends_on": {"type": "array", "items": {"type": "string"}},
+          "risk": {"enum": ["low", "medium", "high"]}
+        }
+      }
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Glob patterns; patches outside this list are rejected by Validation."
+    },
+    "rationale": {"type": "string"}
+  }
+}

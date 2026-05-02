@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TestWriter",
+  "type": "object",
+  "required": ["tests", "summary"],
+  "properties": {
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "content", "covers"],
+        "properties": {
+          "path":    {"type": "string"},
+          "content": {"type": "string", "description": "Full test file content."},
+          "covers":  {"type": "string", "description": "What behavior the test verifies."}
+        }
+      }
+    },
+    "summary": {"type": "string"}
+  }
+}
