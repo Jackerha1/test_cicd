@@ -80,7 +80,7 @@ async def run_pipeline(event: Event) -> PipelineResult:
     t_start = _t.time()
     auth = check_event(event)
     files = event.files_changed or []
-    verdict = classify_risk(files, pipeline_id=event.pipeline_id)
+    verdict = classify_risk(files, diff=event.diff, pipeline_id=event.pipeline_id)
 
     ctx = build_context(event, trusted=auth.trusted)
     ctx.policy_verdict = verdict.to_dict()

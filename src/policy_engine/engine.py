@@ -12,6 +12,7 @@ Two surfaces:
 from __future__ import annotations
 
 import fnmatch
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -47,27 +48,72 @@ def _load_yaml(name: str) -> dict:
     return yaml.safe_load(p.read_text()) or {}
 
 
-def classify(files_changed: list[str], *, pipeline_id: str = "n/a") -> PolicyVerdict:
-    """Return the strictest verdict matching any changed file."""
+def classify(files_changed: list[str], *, diff: str = "",
+             pipeline_id: str = "n/a") -> PolicyVerdict:
+    """Return the strictest verdict matching any changed file or diff content.
+
+    A rule fires when EITHER side of `match` is satisfied:
+      - `match.paths`         — any file glob matches a changed path
+      - `match.diff_contains` — any regex matches inside the diff text
+                                (e.g. "algorithms.*['\"]none['\"]")
+
+    Karpathy reflex: if the AI keeps catching the same pattern, promote it
+    to a deterministic rule so we save AI cost AND raise robustness.
+    """
     cfg = _load_yaml("risk_rules.yaml")
     rules = cfg.get("rules", [])
     severity_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
+    def _rule_to_verdict(rule: dict) -> PolicyVerdict:
+        return PolicyVerdict(
+            risk_level=rule["risk_level"],
+            require_human_approval=bool(rule.get("require_human_approval", False)),
+            block=bool(rule.get("block", False)),
+            rule_id=rule["id"],
+            reason=rule.get("reason", ""),
+        )
+
+    def _stronger(a: Optional[PolicyVerdict], b: PolicyVerdict) -> PolicyVerdict:
+        if a is None:
+            return b
+        # block wins; then highest severity; then require_human_approval wins
+        if b.block and not a.block:
+            return b
+        if a.block and not b.block:
+            return a
+        if severity_rank[b.risk_level] > severity_rank[a.risk_level]:
+            return b
+        return a
+
     best: Optional[PolicyVerdict] = None
+
+    # Path-based matching (existing behavior).
     for f in files_changed:
         for rule in rules:
             patterns = rule.get("match", {}).get("paths", [])
-            if any(fnmatch.fnmatch(f, pat) for pat in patterns):
-                v = PolicyVerdict(
-                    risk_level=rule["risk_level"],
-                    require_human_approval=bool(rule.get("require_human_approval", False)),
-                    block=bool(rule.get("block", False)),
-                    rule_id=rule["id"],
-                    reason=rule.get("reason", ""),
+            if patterns and any(fnmatch.fnmatch(f, pat) for pat in patterns):
+                best = _stronger(best, _rule_to_verdict(rule))
+                break  # first matching rule per file
+
+    # Content-based matching (new). Rules that have BOTH paths and
+    # diff_contains require both to fire. Rules that have ONLY diff_contains
+    # match purely on content.
+    if diff:
+        for rule in rules:
+            patterns = rule.get("match", {}).get("diff_contains", [])
+            if not patterns:
+                continue
+            paths = rule.get("match", {}).get("paths", [])
+            if paths:
+                # Both required: at least one path must already have matched.
+                path_ok = any(
+                    any(fnmatch.fnmatch(f, p) for p in paths)
+                    for f in files_changed
                 )
-                if best is None or severity_rank[v.risk_level] > severity_rank[best.risk_level]:
-                    best = v
-                break  # first match wins per file
+                if not path_ok:
+                    continue
+            if any(re.search(pat, diff, re.MULTILINE) for pat in patterns):
+                best = _stronger(best, _rule_to_verdict(rule))
 
     if best is None:
         d = cfg.get("default", {})

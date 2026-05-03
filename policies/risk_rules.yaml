@@ -1,8 +1,39 @@
 # Risk classification rules — deterministic, evaluated before any agent.
-# A rule fires when ANY of its `match.paths` globs match a changed file.
-# Rules are evaluated top-to-bottom; the FIRST matching rule wins.
+#
+# Two match dimensions (rules can use either or both):
+#   match.paths          — file globs (fnmatch)
+#   match.diff_contains  — regex patterns evaluated against the unified diff
+#                          (used to spot dangerous CODE PATTERNS, not just paths)
+#
+# When both are present, BOTH must match (path AND content).
+# When only diff_contains is present, content match alone fires the rule.
+#
+# Karpathy reflex: when AI keeps catching the same bug pattern across
+# multiple PRs, promote it here so it's caught BEFORE we spend any AI tokens.
+# This is the "data flywheel closed" — Reflector suggests, you commit, future
+# attacks hit the cheap deterministic gate.
 
 rules:
+  # ---- Promoted from Reflector suggestion (pipeline pipe-d58abf94) ----
+  - id: jwt_none_bypass
+    match:
+      paths:
+        - "src/auth/**"
+        - "**/auth/**"
+        - "**/jwt*"
+        - "**/session*"
+        - "**/token*"
+      diff_contains:
+        # Block any diff that adds 'none' to JWT algorithms list.
+        # Catches: algorithms=['RS256','none']  algorithms=["none"]  alg='none', etc.
+        - "algorithms\\s*=\\s*\\[[^\\]]*['\"]none['\"]"
+        - "['\"]alg['\"]\\s*:\\s*['\"]none['\"]"
+        - "\\balg\\s*=\\s*['\"]none['\"]"
+    risk_level: critical
+    require_human_approval: true
+    block: true                          # hard block — no agent runs
+    reason: "Diff enables JWT 'none' algorithm (CWE-347 — token forgery). Promoted from Reflector."
+
   - id: auth_payment_critical
     match:
       paths:
