@@ -1,1 +1,0 @@
-- ['Refactor session token validation'] root cause: failed_security_scan

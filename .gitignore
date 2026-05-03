@@ -1,2 +1,21 @@
-.venv
-__pycache__
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# --- Local env ---
+.env
+.env.local
+*.pid
+
+# --- Runtime artifacts (regenerated each pipeline run) ---
+artifacts/
+logs/
+data/runs/
+memory/
+
+# --- Per-run / dev caches ---
+/tmp/
+.DS_Store

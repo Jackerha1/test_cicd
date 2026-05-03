@@ -1,9 +1,0 @@
-{
-  "pipeline_id": "pipe-a8e7a172",
-  "flow": "blocked",
-  "final_status": "blocked",
-  "risk_level": "critical",
-  "agents": {},
-  "tool_calls": [],
-  "summary": "Blocked by policy rule secrets_block: Patch attempts to touch a secret-bearing file. Always blocked."
-}
