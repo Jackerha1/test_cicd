@@ -1,0 +1,13 @@
+# Regression test for the rule promoted from Reflector signal in pipe-d58abf94.
+# If this case ever regresses, the deterministic JWT-none gate is broken
+# and the system silently fell back to expensive AI-only detection.
+# CI must hold: this case stays PASS forever.
+
+name: policy__jwt_none_bypass
+target: policy_engine
+event: examples/pr_auth_change.json
+expect:
+  rule_id:                jwt_none_bypass
+  risk_level:             critical
+  block:                  true
+  require_human_approval: true

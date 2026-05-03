@@ -1,0 +1,13 @@
+# Negative case for jwt_none_bypass — a docs-only PR must NOT trigger the
+# auth/JWT rule. If this regresses, the rule is over-firing (false positive).
+#
+# It should match the `docs_low` rule instead.
+
+name: policy__docs_only_low
+target: policy_engine
+event: examples/pr_docs_only.json
+expect:
+  rule_id:    docs_low
+  risk_level: low
+  block:      false
+  require_human_approval: false

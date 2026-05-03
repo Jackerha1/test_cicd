@@ -1,16 +1,20 @@
-"""Eval harness — Karpathy-style "measure first".
+"""Eval harness — Karpathy "measure first".
 
-Every eval case is a tiny YAML: (event, agent, expected_fields). The harness
-loads the agent, runs it on the event with no other context, and grades each
-expected field. Reports pass/fail + drift over time so you can see whether
-prompt edits made things better or worse.
+Each eval case is a tiny YAML. Two `target` types:
 
-Grade ops supported in the YAML expect: blocks:
-  field: value             # exact equality
-  field.contains: x        # field is a list and contains x
-  field.in: [a, b, c]      # field equals one of these
-  field.min_length: N      # field is a list/str with at least N items
-  field.max_length: N      # field is a list/str with at most N items
+  target: agent             # legacy default; uses `agent: <name>` field
+    runs the named agent end-to-end through the LLM provider, grades output
+
+  target: policy_engine     # new — DETERMINISTIC, no LLM cost
+    runs Policy Engine `classify(files, diff)` against the event,
+    grades the resulting verdict (rule_id, risk_level, block, ...)
+
+Grade ops in `expect:` blocks (work for both targets):
+  field: value             exact equality
+  field.contains: x        list contains
+  field.in: [a, b, c]      one-of
+  field.min_length: N      list/str length floor
+  field.max_length: N      list/str length ceiling
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ import yaml
 from src.agents import REGISTRY
 from src.context.builder import build as build_context
 from src.config import ROOT
+from src.policy_engine.engine import classify as classify_policy
 from src.trigger.webhook import load_event
 
 EVALS_DIR = ROOT / "evals" / "cases"
@@ -34,7 +39,8 @@ EVALS_DIR = ROOT / "evals" / "cases"
 @dataclass
 class CaseResult:
     name: str
-    agent: str
+    agent: str               # for policy_engine cases this is "policy_engine"
+    target: str = "agent"
     pass_count: int = 0
     fail_count: int = 0
     failures: list[str] = field(default_factory=list)
@@ -60,7 +66,6 @@ def _resolve(obj: Any, dotted: str) -> Any:
 
 
 def _check(output: dict, key: str, expected: Any) -> tuple[bool, str]:
-    """Return (passed, message)."""
     if "." in key and key.split(".")[-1] in {"contains", "in", "min_length", "max_length"}:
         path, op = key.rsplit(".", 1)
         actual = _resolve(output, path)
@@ -82,10 +87,9 @@ def _check(output: dict, key: str, expected: Any) -> tuple[bool, str]:
     return ok, f"{key} == {expected!r} — actual={actual!r}"
 
 
-# ---- core --------------------------------------------------------------
+# ---- runners -----------------------------------------------------------
 
-async def run_case(case_path: Path) -> CaseResult:
-    case = yaml.safe_load(case_path.read_text())
+async def _run_agent_case(case: dict) -> CaseResult:
     name = case["name"]
     agent_name = case["agent"]
     event_path = ROOT / case["event"]
@@ -93,7 +97,7 @@ async def run_case(case_path: Path) -> CaseResult:
 
     AgentCls = REGISTRY.get(agent_name)
     if AgentCls is None:
-        return CaseResult(name=name, agent=agent_name,
+        return CaseResult(name=name, agent=agent_name, target="agent",
                           agent_error=f"unknown agent in REGISTRY: {agent_name}")
 
     event = load_event(event_path)
@@ -103,8 +107,9 @@ async def run_case(case_path: Path) -> CaseResult:
     result = await AgentCls().run(ctx)
     duration = time.time() - t0
 
-    cr = CaseResult(name=name, agent=agent_name, duration_s=duration,
-                    raw_output=result.output, agent_error=result.error)
+    cr = CaseResult(name=name, agent=agent_name, target="agent",
+                    duration_s=duration, raw_output=result.output,
+                    agent_error=result.error)
     if not result.ok:
         return cr
 
@@ -118,13 +123,60 @@ async def run_case(case_path: Path) -> CaseResult:
     return cr
 
 
-async def run_all(only_agent: str | None = None) -> list[CaseResult]:
+def _run_policy_case(case: dict) -> CaseResult:
+    """Deterministic — no LLM, no async needed."""
+    name = case["name"]
+    event_path = ROOT / case["event"]
+    expectations = case.get("expect", {}) or {}
+
+    event = load_event(event_path)
+
+    t0 = time.time()
+    verdict = classify_policy(event.files_changed, diff=event.diff,
+                              pipeline_id=f"eval-{name}")
+    duration = time.time() - t0
+
+    cr = CaseResult(name=name, agent="policy_engine", target="policy_engine",
+                    duration_s=duration, raw_output=verdict.to_dict())
+    for key, expected in expectations.items():
+        ok, msg = _check(verdict.to_dict(), key, expected)
+        if ok:
+            cr.pass_count += 1
+        else:
+            cr.fail_count += 1
+            cr.failures.append(msg)
+    return cr
+
+
+async def run_case(case_path: Path) -> CaseResult:
+    case = yaml.safe_load(case_path.read_text())
+    target = case.get("target", "agent")
+    if target == "policy_engine":
+        return _run_policy_case(case)
+    if target == "agent":
+        return await _run_agent_case(case)
+    return CaseResult(name=case.get("name", case_path.stem),
+                      agent=case.get("agent", "?"), target=target,
+                      agent_error=f"unknown target {target!r}")
+
+
+# ---- batch -------------------------------------------------------------
+
+async def run_all(only_agent: str | None = None,
+                  only_target: str | None = None) -> list[CaseResult]:
     cases = sorted(EVALS_DIR.glob("*.yaml"))
+    parsed = [(p, yaml.safe_load(p.read_text())) for p in cases]
+
+    if only_target:
+        parsed = [(p, c) for p, c in parsed
+                  if c.get("target", "agent") == only_target]
     if only_agent:
-        cases = [c for c in cases if yaml.safe_load(c.read_text()).get("agent") == only_agent]
+        parsed = [(p, c) for p, c in parsed
+                  if c.get("agent") == only_agent]
+
     results: list[CaseResult] = []
-    for c in cases:
-        results.append(await run_case(c))
+    for path, _case in parsed:
+        results.append(await run_case(path))
     return results
 
 
@@ -135,8 +187,8 @@ def write_report(results: list[CaseResult], out_path: Path) -> None:
         "passed": sum(1 for r in results if r.passed),
         "cases": [
             {
-                "name": r.name, "agent": r.agent, "passed": r.passed,
-                "duration_s": round(r.duration_s, 2),
+                "name": r.name, "agent": r.agent, "target": r.target,
+                "passed": r.passed, "duration_s": round(r.duration_s, 4),
                 "pass_count": r.pass_count, "fail_count": r.fail_count,
                 "failures": r.failures, "agent_error": r.agent_error,
             }
@@ -147,6 +199,6 @@ def write_report(results: list[CaseResult], out_path: Path) -> None:
     out_path.write_text(json.dumps(payload, indent=2, default=str))
 
 
-# Sync wrappers for the CLI.
-def run_all_sync(only_agent: str | None = None) -> list[CaseResult]:
-    return asyncio.run(run_all(only_agent))
+def run_all_sync(only_agent: str | None = None,
+                 only_target: str | None = None) -> list[CaseResult]:
+    return asyncio.run(run_all(only_agent=only_agent, only_target=only_target))

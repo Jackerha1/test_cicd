@@ -111,15 +111,22 @@ def audit_dump(pipeline_id: str) -> None:
 
 @app.command("eval")
 def eval_cmd(only_agent: str = typer.Option(None, "--agent", "-a",
-                                            help="Run only cases for this agent.")) -> None:
-    """Run the eval harness against `evals/cases/*.yaml` and print pass/fail."""
+                                            help="Run only cases for this agent."),
+             only_target: str = typer.Option(None, "--target", "-t",
+                                             help="Run only cases of this target type "
+                                                  "(agent | policy_engine).")) -> None:
+    """Run the eval harness against `evals/cases/*.yaml` and print pass/fail.
+
+    Use `--target policy_engine` for the deterministic, free, sub-second
+    policy-rule cases (no LLM required — safe in any CI without API keys).
+    """
     from evals.harness import run_all_sync, write_report
-    results = run_all_sync(only_agent=only_agent)
+    results = run_all_sync(only_agent=only_agent, only_target=only_target)
     if not results:
         console.print("[yellow]No eval cases found.[/]")
         return
 
-    t = Table("case", "agent", "status", "checks", "duration", "fail_msg")
+    t = Table("case", "target", "status", "checks", "duration", "fail_msg")
     passed = 0
     for r in results:
         status = "[green]PASS[/]" if r.passed else "[red]FAIL[/]"
@@ -127,7 +134,8 @@ def eval_cmd(only_agent: str = typer.Option(None, "--agent", "-a",
             passed += 1
         checks = f"{r.pass_count}/{r.pass_count + r.fail_count}"
         fail = (r.failures[0] if r.failures else (r.agent_error or ""))[:60]
-        t.add_row(r.name, r.agent, status, checks, f"{r.duration_s:.1f}s", fail)
+        dur = f"{r.duration_s:.3f}s" if r.target == "policy_engine" else f"{r.duration_s:.1f}s"
+        t.add_row(r.name, r.target, status, checks, dur, fail)
     console.print(t)
     console.print(f"\n[bold]{passed}/{len(results)} cases passed[/]")
     write_report(results, ROOT / "logs" / "eval_latest.json")
