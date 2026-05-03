@@ -50,3 +50,10 @@ jobs:
         # All policy files must be valid YAML.
         run: |
           python -c "import yaml,glob; [yaml.safe_load(open(p)) for p in glob.glob('policies/*.yaml')]"
+
+      - name: Policy-engine evals (deterministic, free)
+        # Regression tests for every deterministic rule in policies/risk_rules.yaml.
+        # Karpathy reflex: when the AI signal gets promoted to a hard rule, that
+        # rule earns a regression test. If you remove the rule but forget the
+        # test, this gate goes red.
+        run: ai-cicd eval --target policy_engine
