@@ -102,19 +102,21 @@ async def generate_reply(
     context_lines: Optional[List[str]] = None,
     system_prompt: Optional[str] = None,
     attachments: Optional[List[str]] = None,
+    backend_override: Optional[str] = None,
 ) -> dict:
-    """Returns ``{"reply_text": str, "plan": dict | None}``.
+    """Returns ``{"reply_text": str, "plan": dict | None, "_backend_used": str}``.
 
     Args:
         user_text: The user's message.
-        context_lines: Extra context lines appended to the prompt (e.g. board state).
+        context_lines: Extra context lines appended to the prompt.
         system_prompt: Override the default system prompt.
-        attachments: List of file paths to attach (images, logs, etc.).
+        attachments: List of file paths to attach.
+        backend_override: per-call override of the backend ("claude" | "gemini" | "auto" | "mock").
     """
-    backend = (PLANNER_BACKEND or "auto").lower()
+    backend = (backend_override or PLANNER_BACKEND or "auto").lower()
 
     if backend == "mock":
-        return {"reply_text": _mock_reply(user_text), "plan": None}
+        return {"reply_text": _mock_reply(user_text), "plan": None, "_backend_used": "mock"}
 
     parts = [user_text.strip() or ""]
     if context_lines:
@@ -124,39 +126,51 @@ async def generate_reply(
 
     raw = None
     error_msg = None
+    backend_used = None
 
-    # Determine which CLI to use
+    # Determine which CLI to use. Per-call override is hard: "claude" means
+    # claude-only; "gemini" means gemini-only. "auto" tries both.
     use_claude = backend in ("claude", "cli", "auto")
     use_gemini = backend in ("gemini", "auto")
+    # When backend is explicitly chosen, skip the cached availability probe and
+    # just attempt the call — the wrapper raises on real failure. This is the
+    # production path: the Router has already made an explicit choice.
+    explicit = backend in ("claude", "gemini")
 
-    if use_claude and await claude_cli.is_available():
+    if use_claude and (explicit or await claude_cli.is_available()):
         try:
             raw = await claude_cli.run_claude(
-                user_prompt=prompt, 
+                user_prompt=prompt,
                 system_prompt=sys_prompt,
-                attachments=attachments
+                attachments=attachments,
             )
+            backend_used = "claude"
         except claude_cli.ClaudeCliError as exc:
             logger.warning("planner: claude CLI failed (%s)", exc)
             error_msg = str(exc)
 
-    if raw is None and use_gemini and await gemini_cli.is_available():
+    if raw is None and use_gemini and (explicit or await gemini_cli.is_available()):
         try:
             raw = await gemini_cli.run_gemini(
-                user_prompt=prompt, 
+                user_prompt=prompt,
                 system_prompt=sys_prompt,
-                attachments=attachments
+                attachments=attachments,
             )
+            backend_used = "gemini"
         except gemini_cli.GeminiCliError as exc:
             logger.warning("planner: gemini CLI failed (%s)", exc)
             error_msg = str(exc)
 
     if raw is None:
         if backend != "auto":
-            return {"reply_text": f"(planner unavailable: {error_msg or 'CLI not found'})", "plan": None}
-        return {"reply_text": _mock_reply(user_text), "plan": None}
+            return {
+                "reply_text": f"(planner unavailable: {error_msg or 'CLI not found'})",
+                "plan": None,
+                "_backend_used": backend or "unknown",
+            }
+        return {"reply_text": _mock_reply(user_text), "plan": None, "_backend_used": "mock"}
 
     reply_text, plan = _extract_plan(raw)
     if not reply_text.strip():
         reply_text = "Plan proposed."
-    return {"reply_text": reply_text, "plan": plan}
+    return {"reply_text": reply_text, "plan": plan, "_backend_used": backend_used}

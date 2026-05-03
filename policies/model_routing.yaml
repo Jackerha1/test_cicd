@@ -1,0 +1,64 @@
+# Per-agent provider routing — production stack.
+#
+# Stack: claude CLI + gemini CLI, both behind the single claude-cli-api gateway.
+# OpenAI provider EXISTS in code but is intentionally NOT registered in the
+# router for this deployment.
+#
+# Karpathy reflexes baked in:
+#   1. Right-size: Triage / Documentation use the cheaper model family.
+#   2. Reasoning-heavy work (Security, Validation, Reflector) uses the strongest model.
+#   3. CRITIC IS DIFFERENT FAMILY from the producer it grades — uncorrelated errors.
+#      → Critic = Gemini (because most producers above are Claude-family or Claude-trained).
+#
+# Override at runtime:
+#   AICICD_FORCE_PROVIDER=gemini   ai-cicd run examples/...
+#   AICICD_FORCE_MODEL=...         ai-cicd eval
+
+default:
+  provider: claude
+  model:    ""              # empty → CLI's own default
+
+routing:
+  triage:
+    provider: gemini        # cheap classification — Gemini Flash territory
+    model:    ""
+
+  planner:
+    provider: claude        # planning needs deep reasoning + good code sense
+    model:    ""
+
+  bug_fix:
+    provider: claude        # code patching is Claude territory in our evals
+    model:    ""
+
+  test_writer:
+    provider: claude
+    model:    ""
+
+  security_scan:
+    provider: claude        # security scan demonstrably catches CWE-347 etc.
+    model:    ""
+
+  code_review:
+    provider: gemini        # second opinion family — different from author
+    model:    ""
+
+  documentation:
+    provider: gemini        # cheap doc edits
+    model:    ""
+
+  validation:
+    provider: claude        # final gate — top model
+    model:    ""
+
+  deployment:
+    provider: claude        # follows checklist; could be cheaper, kept conservative
+    model:    ""
+
+  critic:
+    provider: gemini        # IMPORTANT: different family from producers above
+    model:    ""
+
+  reflector:
+    provider: gemini        # post-mortem from a different family avoids self-defense
+    model:    ""

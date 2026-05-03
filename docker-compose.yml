@@ -1,0 +1,66 @@
+# Production stack — 2 services, both with healthchecks.
+#
+# Karpathy: minimal infra, observable, restartable. Docker Compose covers
+# 95% of "production" for an internal-tools service. K8s manifests live in
+# deploy/k8s/ when you actually need horizontal scaling.
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.gateway
+    container_name: ai-cicd-gateway
+    restart: unless-stopped
+    environment:
+      - PORT=8200
+      - PLANNER_BACKEND=auto                # per-call override is what the pipeline uses
+    ports:
+      - "8200:8200"
+    volumes:
+      # Mount user CLI auth so claude / gemini stay logged in across restarts.
+      # In a real cluster these would come from a Secret + initContainer.
+      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/.gemini:/root/.gemini
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8200/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.pipeline
+    container_name: ai-cicd-pipeline
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      - CLAUDE_CLI_API_URL=http://gateway:8200
+      - WORKSPACE_DIR=/app/artifacts
+      - AUDIT_DB_PATH=/app/logs/audit.db
+      - SANDBOX_MODE=subprocess
+      - MAX_AGENT_RETRIES=2
+      - AUTO_APPROVE=false
+      - AICICD_LOG_FORMAT=json
+      - AICICD_WEBHOOK_SECRET=${AICICD_WEBHOOK_SECRET:-changeme-rotate-this}
+      - AICICD_WORKER_CONCURRENCY=${AICICD_WORKER_CONCURRENCY:-2}
+      - AICICD_PIPELINE_BUDGET_USD=${AICICD_PIPELINE_BUDGET_USD:-1.00}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./memory:/app/memory
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+# All persisted state goes through bind mounts in the project tree
+# so `make logs` / `ai-cicd audit` work from the host without exec.

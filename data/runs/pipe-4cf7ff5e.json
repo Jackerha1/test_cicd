@@ -1,0 +1,175 @@
+{
+  "pipeline_id": "pipe-4cf7ff5e",
+  "ts": 1777698164.920388,
+  "event": {
+    "event_id": "3100b980-a829-48c2-9306-5337acd3a9a7",
+    "pipeline_id": "pipe-4cf7ff5e",
+    "kind": "pull_request",
+    "action": "opened",
+    "repo": "demo-org/demo-app",
+    "number": 220,
+    "title": "Docs: add quickstart section to README",
+    "body": "Adds a 5-line quickstart so new contributors don't have to read the whole readme.",
+    "author": "HuyTK",
+    "branch": "docs/quickstart",
+    "base_branch": "main",
+    "files_changed": [
+      "README.md"
+    ],
+    "diff": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@\n+## Quickstart\n+1. Clone the repo\n+2. Run `make install`\n+3. Run `make dev`\n+4. Open http://localhost:3000\n",
+    "labels": [
+      "docs"
+    ],
+    "raw": {}
+  },
+  "result": {
+    "pipeline_id": "pipe-4cf7ff5e",
+    "flow": "pr_review",
+    "final_status": "approved",
+    "risk_level": "low",
+    "agents": {
+      "triage": {
+        "agent": "triage",
+        "ok": true,
+        "output": {
+          "kind": "bug",
+          "severity": "low",
+          "scope": "tiny",
+          "summary": "mock",
+          "suggested_agents": []
+        },
+        "error": null,
+        "retries": 0,
+        "telemetry": {
+          "tokens_in": 348,
+          "tokens_out": 29,
+          "cached_tokens": 0,
+          "cost_usd": 9.3e-05,
+          "duration_s": 0.0,
+          "estimated": false
+        },
+        "provider": "openai",
+        "model": "gpt-5-nano"
+      },
+      "security_scan": {
+        "agent": "security_scan",
+        "ok": false,
+        "output": null,
+        "error": "no findings but highest_severity != 'none'",
+        "retries": 2,
+        "telemetry": {
+          "tokens_in": 1397,
+          "tokens_out": 66,
+          "cached_tokens": 0,
+          "cost_usd": 0.001827,
+          "duration_s": 0.0,
+          "estimated": false
+        },
+        "provider": "openai",
+        "model": "o3-mini"
+      },
+      "code_review": {
+        "agent": "code_review",
+        "ok": true,
+        "output": {
+          "summary": "mock",
+          "issues": [],
+          "recommendation": "approve"
+        },
+        "error": null,
+        "retries": 0,
+        "telemetry": {
+          "tokens_in": 345,
+          "tokens_out": 20,
+          "cached_tokens": 0,
+          "cost_usd": 0.002025,
+          "duration_s": 0.0,
+          "estimated": false
+        },
+        "provider": "openai",
+        "model": "gpt-5"
+      },
+      "validation": {
+        "agent": "validation",
+        "ok": true,
+        "output": {
+          "verdict": "approve",
+          "checks": [],
+          "summary": "mock",
+          "failed_checks": []
+        },
+        "error": null,
+        "retries": 0,
+        "telemetry": {
+          "tokens_in": 341,
+          "tokens_out": 18,
+          "cached_tokens": 0,
+          "cost_usd": 0.001975,
+          "duration_s": 0.0,
+          "estimated": false
+        },
+        "provider": "openai",
+        "model": "gpt-5"
+      },
+      "critic_validation": {
+        "agent": "critic",
+        "ok": true,
+        "output": {
+          "target_agent": "validation",
+          "score_overall": 3,
+          "subscores": {
+            "correctness": 5,
+            "scope_discipline": 7,
+            "evidence_use": 1,
+            "output_quality": 1
+          },
+          "failure_modes": [
+            "vague_reasoning",
+            "overconfidence"
+          ],
+          "reasoning": "The validation agent's final verdict ('approve') is technically correct \u2014 the policy verdict is docs_low, risk_level=low, block=False, require_human_approval=False, and the diff touches only README.md. However, the output is clearly a stub: summary='mock', checks=[], failed_checks=[]. The agent was supposed to 'independently verify prior agent outputs against hard rules' but performed no checks whatsoever. Evidence_use scores 1 because no prior outputs were referenced \u2014 critically, the triage agent misclassified a docs PR as kind='bug', a discrepancy a functioning validation agent must flag but this one ignored entirely. Output_quality scores 1 because 'mock' is a placeholder, not a summary. Scope_discipline scores 7 because the agent at least stayed within its validation role and did not stray into code review or triage territory. Correctness scores 5 because the verdict is right for the wrong reasons \u2014 the agent got lucky that approve was the obvious call for a trivial docs PR, not because it did any work. Overconfidence is flagged because approving with zero checks and a mock summary conveys false certainty. Overall score of 3 reflects: correct verdict, zero evidence of actual validation work performed."
+        },
+        "error": null,
+        "retries": 0,
+        "telemetry": {
+          "tokens_in": 1255,
+          "tokens_out": 428,
+          "cached_tokens": 0,
+          "cost_usd": 0.010185,
+          "duration_s": 23.623,
+          "estimated": true
+        },
+        "provider": "claude",
+        "model": "claude-default"
+      }
+    },
+    "tool_calls": [
+      {
+        "action": "comment_pr",
+        "ok": true,
+        "decision": "auto"
+      }
+    ],
+    "summary": "## AI-CICD review\n\n**Triage**: kind=bug, severity=low, scope=tiny\n**Code review**: recommendation=approve (0 comments)\n**Validation**: verdict=**approve**",
+    "critic_scores": {
+      "validation": {
+        "target_agent": "validation",
+        "score_overall": 3,
+        "subscores": {
+          "correctness": 5,
+          "scope_discipline": 7,
+          "evidence_use": 1,
+          "output_quality": 1
+        },
+        "failure_modes": [
+          "vague_reasoning",
+          "overconfidence"
+        ],
+        "reasoning": "The validation agent's final verdict ('approve') is technically correct \u2014 the policy verdict is docs_low, risk_level=low, block=False, require_human_approval=False, and the diff touches only README.md. However, the output is clearly a stub: summary='mock', checks=[], failed_checks=[]. The agent was supposed to 'independently verify prior agent outputs against hard rules' but performed no checks whatsoever. Evidence_use scores 1 because no prior outputs were referenced \u2014 critically, the triage agent misclassified a docs PR as kind='bug', a discrepancy a functioning validation agent must flag but this one ignored entirely. Output_quality scores 1 because 'mock' is a placeholder, not a summary. Scope_discipline scores 7 because the agent at least stayed within its validation role and did not stray into code review or triage territory. Correctness scores 5 because the verdict is right for the wrong reasons \u2014 the agent got lucky that approve was the obvious call for a trivial docs PR, not because it did any work. Overconfidence is flagged because approving with zero checks and a mock summary conveys false certainty. Overall score of 3 reflects: correct verdict, zero evidence of actual validation work performed."
+      }
+    },
+    "reflector": null,
+    "cost_usd": 0.016105,
+    "duration_s": 23.745
+  }
+}

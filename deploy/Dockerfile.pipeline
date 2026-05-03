@@ -1,0 +1,39 @@
+# Pipeline image — runs the AI-CICD orchestrator + webhook server.
+# Calls out to the gateway service for every LLM invocation; never embeds a CLI.
+
+FROM python:3.11-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git curl ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install deps first (better Docker layer caching).
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -e .
+
+# Then the source.
+COPY src/ ./src/
+COPY evals/ ./evals/
+COPY prompts/ ./prompts/
+COPY schemas/ ./schemas/
+COPY policies/ ./policies/
+COPY examples/ ./examples/
+
+# Persisted state lives in volumes mounted at these paths.
+RUN mkdir -p /app/artifacts /app/logs /app/data /app/memory
+ENV WORKSPACE_DIR=/app/artifacts \
+    AUDIT_DB_PATH=/app/logs/audit.db \
+    AICICD_LOG_FORMAT=json
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -fsS http://localhost:8000/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# Default to running the production webhook server. Override with:
+#   docker run ... ai-cicd run examples/...
+CMD ["python", "-m", "src.server.webhook"]

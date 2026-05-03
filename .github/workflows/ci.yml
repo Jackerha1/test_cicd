@@ -1,0 +1,52 @@
+# Deterministic CI gates — no LLM call, no API key required.
+# Runs on every push + PR. Fast (~30s). Never flaky.
+#
+# Karpathy: deterministic gates first; LLM-based review is *additional*, never
+# the only signal. If these fail, the LLM review is wasted compute.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Lethal-trifecta audit (hard gate)
+        # Refuses to start if any agent holds (untrusted_input + private_data + exfil).
+        run: ai-cicd trifecta-audit
+
+      - name: Provider routing table (sanity)
+        # Just prints the per-agent routing — fails if YAML is broken.
+        run: ai-cicd providers
+
+      - name: Schema integrity
+        # Every agent must have a matching prompt + schema file. Missing one → fail.
+        run: |
+          for prompt in prompts/*.md; do
+            name=$(basename "$prompt" .md)
+            test -f "schemas/${name}.json" || { echo "missing schema for ${name}"; exit 1; }
+          done
+          for schema in schemas/*.json; do
+            name=$(basename "$schema" .json)
+            test -f "prompts/${name}.md" || { echo "missing prompt for ${name}"; exit 1; }
+          done
+
+      - name: Policy YAML parse
+        # All policy files must be valid YAML.
+        run: |
+          python -c "import yaml,glob; [yaml.safe_load(open(p)) for p in glob.glob('policies/*.yaml')]"

@@ -29,13 +29,16 @@ console = Console()
 
 @app.command("health")
 def health() -> None:
-    """Probe the claude-cli-api server (must be running on CLAUDE_CLI_API_URL)."""
-    try:
-        info = asyncio.run(health_check())
-    except Exception as exc:
-        console.print(f"[red]claude-cli-api unreachable:[/] {exc}")
-        raise typer.Exit(code=1)
-    console.print_json(data=info)
+    """Probe each configured LLM provider (claude-cli-api + openai-api)."""
+    from src.llm import LLMError, get_router
+    router = get_router()
+    out = {}
+    for name, prov in router._providers.items():
+        try:
+            out[name] = asyncio.run(prov.health())
+        except LLMError as exc:
+            out[name] = {"provider": name, "error": str(exc)}
+    console.print_json(data=out)
 
 
 @app.command("list")
@@ -207,6 +210,97 @@ def memory_show(repo: str) -> None:
         console.print(f"[yellow]No memory for repo {repo!r} yet.[/]")
         return
     console.print_json(data=m)
+
+
+@app.command("serve")
+def serve(port: int = typer.Option(8000, "--port", "-p"),
+          host: str = typer.Option("0.0.0.0", "--host", "-H")) -> None:
+    """Run the production webhook server locally (Karpathy: dev = prod -1)."""
+    import uvicorn
+    uvicorn.run("src.server.webhook:app", host=host, port=port, reload=False)
+
+
+@app.command("providers")
+def providers() -> None:
+    """Show the configured per-agent provider+model routing."""
+    from src.llm.router import get_router
+    router = get_router()
+    routing = router.config.get("routing") or {}
+    default = router.config.get("default") or {}
+    t = Table("agent", "provider", "model", "source")
+    for agent in sorted({"triage", "planner", "bug_fix", "test_writer",
+                         "security_scan", "code_review", "documentation",
+                         "validation", "deployment", "critic", "reflector"}):
+        r = router.routing_for(agent)
+        src = "per-agent" if agent in routing else "default"
+        t.add_row(agent, r.provider, r.model or "(default)", src)
+    console.print(t)
+    console.print(f"\n[dim]default: {default}[/]")
+    import os as _os
+    if _os.getenv("AICICD_FORCE_PROVIDER"):
+        console.print(f"[yellow]AICICD_FORCE_PROVIDER={_os.getenv('AICICD_FORCE_PROVIDER')} overrides per-agent routing[/]")
+    if _os.getenv("AICICD_FORCE_MODEL"):
+        console.print(f"[yellow]AICICD_FORCE_MODEL={_os.getenv('AICICD_FORCE_MODEL')} overrides per-agent model[/]")
+
+
+@app.command("compare")
+def compare(
+    providers: str = typer.Option("claude,openai", "--providers", "-p",
+                                   help="Comma-separated providers to compare."),
+    only_agent: str = typer.Option(None, "--agent", "-a",
+                                    help="Limit to eval cases for this agent."),
+) -> None:
+    """Run the eval harness against each provider and print a side-by-side matrix."""
+    import os as _os
+    from evals.harness import run_all_sync
+
+    provs = [p.strip() for p in providers.split(",") if p.strip()]
+    if not provs:
+        console.print("[red]At least one provider required.[/]")
+        raise typer.Exit(code=2)
+
+    matrix: dict[str, list] = {}
+    saved_force = _os.environ.get("AICICD_FORCE_PROVIDER")
+    try:
+        for p in provs:
+            console.rule(f"Running evals on provider={p}")
+            _os.environ["AICICD_FORCE_PROVIDER"] = p
+            # Force a fresh router so the override is re-read.
+            from src.llm import router as _r
+            _r._singleton = None
+            matrix[p] = run_all_sync(only_agent=only_agent)
+    finally:
+        if saved_force is None:
+            _os.environ.pop("AICICD_FORCE_PROVIDER", None)
+        else:
+            _os.environ["AICICD_FORCE_PROVIDER"] = saved_force
+        from src.llm import router as _r
+        _r._singleton = None
+
+    # Render: rows = case names, columns = providers.
+    case_names = sorted({r.name for results in matrix.values() for r in results})
+    cols = ["case"] + provs
+    t = Table(*cols)
+    for case in case_names:
+        row = [case]
+        for p in provs:
+            r = next((x for x in matrix[p] if x.name == case), None)
+            if r is None:
+                row.append("[dim]n/a[/]")
+            elif r.passed:
+                row.append(f"[green]PASS[/] {r.duration_s:.1f}s")
+            else:
+                why = (r.failures[0] if r.failures else (r.agent_error or ""))[:40]
+                row.append(f"[red]FAIL[/] {why}")
+        t.add_row(*row)
+    console.print(t)
+
+    # Summary line per provider.
+    for p in provs:
+        results = matrix[p]
+        passed = sum(1 for r in results if r.passed)
+        total = len(results)
+        console.print(f"  {p:8s} {passed}/{total} passed")
 
 
 @app.command("reflect")
