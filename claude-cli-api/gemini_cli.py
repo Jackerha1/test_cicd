@@ -75,7 +75,12 @@ async def run_gemini(
         suffix = " ".join(f"@{p}" for p in attachments)
         final_prompt = f"{final_prompt}\n\n{suffix}" if final_prompt else suffix
 
-    args: list[str] = [_CLI_BIN, "-p", final_prompt, "--output-format", "json", "--yolo"]
+    args: list[str] = [
+        _CLI_BIN, "-p", final_prompt,
+        "--output-format", "json",
+        "--yolo",
+        "--skip-trust",        # don't refuse based on workdir trust state (we're a server)
+    ]
     
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -103,18 +108,25 @@ async def run_gemini(
         )
 
     stdout = stdout_b.decode(errors="replace")
+
+    # Gemini sometimes prepends warnings ("MCP issues detected...") before the
+    # JSON envelope. Find the first '{' and parse from there.
+    brace = stdout.find("{")
+    json_blob = stdout[brace:] if brace >= 0 else stdout
+
     try:
-        envelope = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        # Fallback: maybe it's not JSON if --output-format json isn't respected
+        envelope = json.loads(json_blob)
+    except json.JSONDecodeError:
         return stdout.strip()
 
     if not isinstance(envelope, dict):
         return stdout.strip()
 
-    result = envelope.get("result")
-    if result is None:
-        # Try to find common result keys
-        result = envelope.get("text") or envelope.get("content") or stdout.strip()
-        
-    return str(result)
+    # Gemini envelope shape: {"session_id":..., "response":"<text>", "stats":...}
+    # Try the documented keys in order.
+    for k in ("response", "result", "text", "content"):
+        v = envelope.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+
+    return stdout.strip()

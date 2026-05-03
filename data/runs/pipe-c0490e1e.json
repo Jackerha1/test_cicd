@@ -1,0 +1,56 @@
+{
+  "pipeline_id": "pipe-c0490e1e",
+  "ts": 1777781797.2644172,
+  "event": {
+    "event_id": "2f13691b-da22-41d1-80b4-f6397c7bf1c7",
+    "pipeline_id": "pipe-c0490e1e",
+    "kind": "pull_request",
+    "action": "opened",
+    "repo": "demo-org/demo-app",
+    "number": 220,
+    "title": "Docs: add quickstart section to README",
+    "body": "Adds a 5-line quickstart so new contributors don't have to read the whole readme.",
+    "author": "HuyTK",
+    "branch": "docs/quickstart",
+    "base_branch": "main",
+    "files_changed": [
+      "README.md"
+    ],
+    "diff": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@\n+## Quickstart\n+1. Clone the repo\n+2. Run `make install`\n+3. Run `make dev`\n+4. Open http://localhost:3000\n",
+    "labels": [
+      "docs"
+    ],
+    "raw": {}
+  },
+  "result": {
+    "pipeline_id": "pipe-c0490e1e",
+    "flow": "pr_review",
+    "final_status": "failed",
+    "risk_level": "low",
+    "agents": {
+      "triage": {
+        "agent": "triage",
+        "ok": false,
+        "output": null,
+        "error": "no JSON found in reply",
+        "retries": 2,
+        "telemetry": {
+          "tokens_in": 3303,
+          "tokens_out": 2228,
+          "cached_tokens": 0,
+          "cost_usd": 0.043329,
+          "duration_s": 42.502,
+          "estimated": true
+        },
+        "provider": "gemini",
+        "model": ""
+      }
+    },
+    "tool_calls": [],
+    "summary": "triage failed: no JSON found in reply",
+    "critic_scores": {},
+    "reflector": null,
+    "cost_usd": 0.043329,
+    "duration_s": 42.582
+  }
+}

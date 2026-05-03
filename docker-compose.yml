@@ -1,44 +1,26 @@
-# Production stack — 2 services, both with healthchecks.
+# Production stack — single container.
 #
-# Karpathy: minimal infra, observable, restartable. Docker Compose covers
-# 95% of "production" for an internal-tools service. K8s manifests live in
-# deploy/k8s/ when you actually need horizontal scaling.
+# claude-cli-api gateway runs DIRECTLY ON HOST (managed by `make gateway` /
+# `make gateway-stop`). The pipeline container reaches it via Docker
+# Desktop's special DNS `host.docker.internal`, which resolves to the host
+# from inside any container.
+#
+# Why host instead of container? The CLI binaries (claude / gemini) carry
+# OAuth tokens that are bound to the host machine fingerprint. Mounting
+# ~/.claude.json into a container does NOT make those tokens portable —
+# they fail with "Not logged in". For local production we keep the auth on
+# host where it actually works; for cloud production, swap host gateway
+# for an instance with API-key auth.
 
 services:
-  gateway:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.gateway
-    container_name: ai-cicd-gateway
-    restart: unless-stopped
-    environment:
-      - PORT=8200
-      - PLANNER_BACKEND=auto                # per-call override is what the pipeline uses
-    ports:
-      - "8200:8200"
-    volumes:
-      # Mount user CLI auth so claude / gemini stay logged in across restarts.
-      # In a real cluster these would come from a Secret + initContainer.
-      - ${HOME}/.claude:/root/.claude
-      - ${HOME}/.gemini:/root/.gemini
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8200/readyz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
   pipeline:
     build:
       context: .
       dockerfile: deploy/Dockerfile.pipeline
     container_name: ai-cicd-pipeline
     restart: unless-stopped
-    depends_on:
-      gateway:
-        condition: service_healthy
     environment:
-      - CLAUDE_CLI_API_URL=http://gateway:8200
+      - CLAUDE_CLI_API_URL=http://host.docker.internal:8200
       - WORKSPACE_DIR=/app/artifacts
       - AUDIT_DB_PATH=/app/logs/audit.db
       - SANDBOX_MODE=subprocess
@@ -48,6 +30,12 @@ services:
       - AICICD_WEBHOOK_SECRET=${AICICD_WEBHOOK_SECRET:-changeme-rotate-this}
       - AICICD_WORKER_CONCURRENCY=${AICICD_WORKER_CONCURRENCY:-2}
       - AICICD_PIPELINE_BUDGET_USD=${AICICD_PIPELINE_BUDGET_USD:-1.00}
+      # Optional: force a single provider for ALL agents (testing / incident).
+      - AICICD_FORCE_PROVIDER=${AICICD_FORCE_PROVIDER:-}
+      - AICICD_FORCE_MODEL=${AICICD_FORCE_MODEL:-}
+    extra_hosts:
+      # Linux Docker doesn't auto-create host.docker.internal — explicit map.
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     volumes:
@@ -55,6 +43,9 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
       - ./memory:/app/memory
+      # Bind-mount policies / prompts so ops can iterate without a rebuild.
+      - ./policies:/app/policies:ro
+      - ./prompts:/app/prompts:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 30s
@@ -62,5 +53,4 @@ services:
       retries: 3
       start_period: 15s
 
-# All persisted state goes through bind mounts in the project tree
-# so `make logs` / `ai-cicd audit` work from the host without exec.
+# Bind mounts only — host can `make audit` / `tail logs/audit.db` without exec.

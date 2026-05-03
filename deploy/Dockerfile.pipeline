@@ -9,18 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install deps first (better Docker layer caching).
+# Copy source first — `pip install -e .` needs the package directories to exist.
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir -e .
-
-# Then the source.
 COPY src/ ./src/
 COPY evals/ ./evals/
 COPY prompts/ ./prompts/
 COPY schemas/ ./schemas/
 COPY policies/ ./policies/
 COPY examples/ ./examples/
+
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -e .
 
 # Persisted state lives in volumes mounted at these paths.
 RUN mkdir -p /app/artifacts /app/logs /app/data /app/memory

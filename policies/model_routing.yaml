@@ -1,64 +1,35 @@
-# Per-agent provider routing — production stack.
+# Per-agent provider routing — gemini-default deployment.
 #
-# Stack: claude CLI + gemini CLI, both behind the single claude-cli-api gateway.
-# OpenAI provider EXISTS in code but is intentionally NOT registered in the
-# router for this deployment.
-#
-# Karpathy reflexes baked in:
-#   1. Right-size: Triage / Documentation use the cheaper model family.
-#   2. Reasoning-heavy work (Security, Validation, Reflector) uses the strongest model.
-#   3. CRITIC IS DIFFERENT FAMILY from the producer it grades — uncorrelated errors.
-#      → Critic = Gemini (because most producers above are Claude-family or Claude-trained).
+# Default = gemini for every agent EXCEPT the Critic, which stays on
+# claude-family. Karpathy reflex: an independent judge must come from a
+# DIFFERENT family than the producers it grades — uncorrelated errors.
+# If we routed Critic to gemini too, it would be grading its own family's
+# work and miss the same failure modes.
 #
 # Override at runtime:
-#   AICICD_FORCE_PROVIDER=gemini   ai-cicd run examples/...
-#   AICICD_FORCE_MODEL=...         ai-cicd eval
+#   AICICD_FORCE_PROVIDER=claude   ai-cicd run examples/...   # all agents → claude
+#   AICICD_FORCE_PROVIDER=gemini   ai-cicd run examples/...   # all agents → gemini
 
 default:
-  provider: claude
+  provider: gemini
   model:    ""              # empty → CLI's own default
 
 routing:
-  triage:
-    provider: gemini        # cheap classification — Gemini Flash territory
-    model:    ""
+  # All producer / decision agents → gemini (the deployment default).
+  triage:        {provider: gemini, model: ""}
+  planner:       {provider: gemini, model: ""}
+  bug_fix:       {provider: gemini, model: ""}
+  test_writer:   {provider: gemini, model: ""}
+  security_scan: {provider: gemini, model: ""}
+  code_review:   {provider: gemini, model: ""}
+  documentation: {provider: gemini, model: ""}
+  validation:    {provider: gemini, model: ""}
+  deployment:    {provider: gemini, model: ""}
+  reflector:     {provider: gemini, model: ""}
 
-  planner:
-    provider: claude        # planning needs deep reasoning + good code sense
-    model:    ""
-
-  bug_fix:
-    provider: claude        # code patching is Claude territory in our evals
-    model:    ""
-
-  test_writer:
+  # ---- Independent judge (different family) ----
+  critic:
     provider: claude
     model:    ""
-
-  security_scan:
-    provider: claude        # security scan demonstrably catches CWE-347 etc.
-    model:    ""
-
-  code_review:
-    provider: gemini        # second opinion family — different from author
-    model:    ""
-
-  documentation:
-    provider: gemini        # cheap doc edits
-    model:    ""
-
-  validation:
-    provider: claude        # final gate — top model
-    model:    ""
-
-  deployment:
-    provider: claude        # follows checklist; could be cheaper, kept conservative
-    model:    ""
-
-  critic:
-    provider: gemini        # IMPORTANT: different family from producers above
-    model:    ""
-
-  reflector:
-    provider: gemini        # post-mortem from a different family avoids self-defense
-    model:    ""
+    # If you flip Critic to gemini, Karpathy's "different-family judge"
+    # invariant breaks. Add a CI gate before doing that.
