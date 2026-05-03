@@ -3,7 +3,8 @@
 > **v4 — Production deployment**: Dockerized 2-service stack (gateway +
 > pipeline), HMAC-verified webhook + bounded worker queue, NDJSON logs,
 > `/healthz`+`/readyz`, per-pipeline cost ceiling, `Makefile` ops surface,
-> [runbooks](runbooks/00_index.md) for the four common failure modes.
+> [runbooks](runbooks/00_index.md) for failure modes + the
+> [pattern-promotion SOP](runbooks/05_pattern_promotion.md) (AI signal → deterministic rule).
 > Provider stack: **Claude CLI + Gemini CLI** behind the single
 > `claude-cli-api` gateway. See [v4 section](#v4--production-deployment).
 >
@@ -415,6 +416,7 @@ back-pressure signals for the upstream load balancer.
 | "Different-family judge" | Critic = Gemini; producers it grades = mostly Claude. Uncorrelated errors. |
 | "Ops > heroics" | [`runbooks/`](runbooks/00_index.md) for provider-down, queue-stuck, lethal-trifecta, cost-spike. Pageable in 2 min. |
 | "Cost is a metric, not an afterthought" | Per-pipeline budget ceiling, `make cost` per pipeline, alert hooks documented in runbook 04. |
+| **"AI discovers, humans ratchet"** | [Pattern-promotion SOP](runbooks/05_pattern_promotion.md): when AI catches the same thing twice, promote to a deterministic rule + regression test. Closed-loop flywheel. |
 | **"Use your own product first"** | **Dogfood workflow — see below.** |
 
 ### Dogfood — the pipeline reviews its own PRs

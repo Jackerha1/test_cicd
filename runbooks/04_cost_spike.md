@@ -57,6 +57,11 @@ If a single change blew past, lower it temporarily.
    Triage / Documentation should be on `gemini` (or `gpt-5-nano`); Validation
    stays on top model.
 
+4. **Same pattern keeps hitting AI when it could be a rule**: this is the
+   highest-leverage cost fix. Follow [runbook 05 — pattern promotion](05_pattern_promotion.md)
+   to ratchet the AI signal into a deterministic gate. Same security
+   guarantee, $0 cost, sub-50ms latency.
+
 ## Prevention
 
 - Add CI gate: `make eval` reports cost per case; fail if it doubles vs the
