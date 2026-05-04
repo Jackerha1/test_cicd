@@ -1,0 +1,19 @@
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# --- Node ---
+node_modules/
+dist/
+.vite/
+coverage/
+
+# --- Local DB / env ---
+*.db
+*.db-journal
+.env
+.env.local

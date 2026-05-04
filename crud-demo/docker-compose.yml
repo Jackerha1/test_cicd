@@ -1,0 +1,46 @@
+# Local dev stack for crud-demo. Backend + frontend, both with hot reload.
+# DB is SQLite living inside the backend container's volume — survives `down`.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crud-demo-backend
+    restart: unless-stopped
+    environment:
+      - FLASK_DEBUG=1
+      - APP_DB_URL=sqlite:////data/app.db
+      - APP_JWT_SECRET=${APP_JWT_SECRET:-dev-only-change-me}
+      - APP_CORS_ORIGIN=${APP_CORS_ORIGIN:-http://localhost:5173}
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - crud-demo-db:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/api/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: crud-demo-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - VITE_API_URL=http://localhost:5000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  crud-demo-db:

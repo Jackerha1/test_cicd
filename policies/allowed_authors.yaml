@@ -3,9 +3,12 @@
 # context, which forces stricter policy on downstream agents.
 trusted_authors:
   - "HuyTK"
+  - "Jackerha1"            # GitHub repo owner of test_cicd
   - "internal-bot"
   - "dependabot[bot]"
+  - "renovate[bot]"
 
 # Bot accounts whose comments are allowed to issue commands like /ai fix.
 trusted_bots:
   - "internal-bot"
+  - "dependabot[bot]"

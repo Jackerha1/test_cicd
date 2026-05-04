@@ -1,0 +1,27 @@
+[project]
+name = "crud-demo-backend"
+version = "0.1.0"
+description = "Flask + SQLAlchemy + JWT Tasks API. Review target for the AI-CICD pipeline."
+requires-python = ">=3.11"
+dependencies = [
+  "flask>=3.0",
+  "flask-sqlalchemy>=3.1",
+  "flask-cors>=4.0",
+  "marshmallow>=3.21",
+  "pyjwt>=2.8",
+  "bcrypt>=4.1",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+]
+
+[tool.setuptools]
+packages = ["app", "app.routes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --tb=short"

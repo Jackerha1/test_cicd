@@ -95,11 +95,38 @@ async def run_pipeline(event: Event) -> PipelineResult:
     )
 
     if verdict.block:
+        block_summary = (
+            f"## 🚫 AI-CICD review — `blocked` by policy\n\n"
+            f"**Rule**: `{verdict.rule_id}` (risk = `{verdict.risk_level}`)\n\n"
+            f"**Reason**: {verdict.reason}\n\n"
+            f"_The deterministic policy gate refused the diff before any AI agent ran "
+            f"— $0.00 cost, sub-100ms decision. If you believe this is a false positive, "
+            f"see `policies/risk_rules.yaml` and `runbooks/05_pattern_promotion.md`._\n\n"
+            f"_Pipeline `{event.pipeline_id}`_"
+        )
         result = PipelineResult(
             pipeline_id=event.pipeline_id, flow="blocked",
             final_status="blocked", risk_level=verdict.risk_level,
-            summary=f"Blocked by policy rule {verdict.rule_id}: {verdict.reason}",
+            summary=block_summary,
         )
+        # Surface the block to the PR author. Without this, they think the
+        # pipeline never re-ran. Best-effort — failures don't matter; the
+        # audit log + dataset writer remain authoritative.
+        if event.kind == "pull_request" and event.number and event.repo:
+            try:
+                comment = proxy.call(
+                    pipeline_id=event.pipeline_id, agent="orchestrator",
+                    action="comment_pr", risk_level=verdict.risk_level,
+                    params={"pr_number": event.number, "body": block_summary,
+                            "repo": event.repo},
+                )
+                result.tool_calls.append({
+                    "action": "comment_pr", "ok": comment.ok,
+                    "decision": comment.decision,
+                    "github": (comment.output or {}).get("github") if comment.ok else None,
+                })
+            except Exception as exc:                  # noqa: BLE001 — best effort
+                logger.warning("block-path comment_pr failed: %s", exc)
     elif event.kind == "pull_request":
         result = await _pr_review_flow(event, ctx, verdict)
     elif event.kind == "issue":
@@ -210,9 +237,12 @@ async def _pr_review_flow(event: Event, ctx, verdict) -> PipelineResult:
     comment = proxy.call(
         pipeline_id=event.pipeline_id, agent="orchestrator", action="comment_pr",
         risk_level=verdict.risk_level,
-        params={"pr_number": event.number, "body": summary},
+        params={"pr_number": event.number, "body": summary, "repo": event.repo},
     )
-    result.tool_calls.append({"action": "comment_pr", "ok": comment.ok, "decision": comment.decision})
+    result.tool_calls.append({
+        "action": "comment_pr", "ok": comment.ok, "decision": comment.decision,
+        "github": (comment.output or {}).get("github") if comment.ok else None,
+    })
 
     # 7. Decide final status
     v = (validation.output or {}).get("verdict") if validation.ok else "block"

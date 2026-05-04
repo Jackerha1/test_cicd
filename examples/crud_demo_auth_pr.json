@@ -1,0 +1,16 @@
+{
+  "kind": "pull_request",
+  "action": "opened",
+  "repo": "Jackerha1/test_cicd",
+  "number": 99,
+  "title": "feat(crud-demo): tweak JWT TTL",
+  "body": "Reduce default JWT TTL from 1h to 15m for stricter session control.",
+  "author": "HuyTK",
+  "branch": "feature/crud-demo-jwt-ttl",
+  "base_branch": "develop",
+  "files_changed": [
+    "crud-demo/backend/app/auth.py"
+  ],
+  "diff": "diff --git a/crud-demo/backend/app/auth.py b/crud-demo/backend/app/auth.py\n--- a/crud-demo/backend/app/auth.py\n+++ b/crud-demo/backend/app/auth.py\n@@\n-    JWT_TTL_SECONDS = int(os.getenv(\"APP_JWT_TTL_SECONDS\", \"3600\"))\n+    JWT_TTL_SECONDS = int(os.getenv(\"APP_JWT_TTL_SECONDS\", \"900\"))\n",
+  "labels": ["security"]
+}

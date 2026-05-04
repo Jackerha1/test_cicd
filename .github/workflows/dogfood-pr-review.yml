@@ -1,134 +1,76 @@
-# Dogfood — the AI-CICD pipeline reviews its own PR.
+# Dogfood — the AI-CICD pipeline reviews its own PRs.
 #
-# Karpathy reflex: "use your own product first." If our system can't review
-# its own PRs, why should anyone trust it on theirs.
+# v2 architecture (webhook-based, NO ANTHROPIC_API_KEY in CI):
+#   This workflow does NOT run the pipeline in the GitHub Action runner.
+#   Instead, the GitHub webhook (configured at repo Settings → Webhooks)
+#   POSTs the pull_request event directly to the maintainer's local
+#   pipeline server (exposed via cloudflared tunnel). The pipeline runs
+#   on the maintainer's host using the local claude + gemini CLIs (with
+#   their OAuth tokens — no portable API keys needed).
 #
-# Skips silently when ANTHROPIC_API_KEY isn't set, so forks / draft PRs from
-# external contributors don't fail spuriously.
+# What THIS workflow does (only):
+#   - On PR open/sync, post a single "review queued" comment so authors
+#     know the local pipeline will respond. The real review comment
+#     arrives separately from the local pipeline (via gh CLI).
+#
+# Configuration on the repo side:
+#   1. Settings → Webhooks → Add:
+#        Payload URL:  https://<your-cloudflared-url>/event/github
+#        Content type: application/json
+#        Secret:       <AICICD_WEBHOOK_SECRET on host>
+#        Events:       Pull requests, Issues, Issue comments
+#
+# Branch policy: this workflow ONLY fires for PRs targeting `develop`.
+# `main` is sacred — the pipeline reviews develop work, not pipeline code.
 
 name: AI-CICD PR Review (dogfood)
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    branches: [develop]
 
 permissions:
   contents: read
   pull-requests: write
 
-# One run per PR; cancel previous if a new commit lands.
 concurrency:
   group: ai-cicd-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  review:
-    # Skip on PRs from forks (no access to secrets) and skip if no API key.
+  hand-off-to-local-pipeline:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
     steps:
-      - name: Check secret presence
-        id: secret_check
+      - name: Post pending-review comment
         env:
-          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          if [ -z "$KEY" ]; then
-            echo "has_key=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::ANTHROPIC_API_KEY not set — skipping LLM review."
+          MARKER='<!-- ai-cicd-pending -->'
+          BODY="$MARKER
+          🤖 **AI-CICD review queued**
+
+          The local pipeline (running on maintainer's host) will fetch this
+          PR's diff via webhook and post a full agent review within ~1–3 min.
+
+          - 9 specialist agents (triage, security_scan, code_review, …)
+          - Provider stack: gemini-default + claude-critic (different family)
+          - This pending notice will be replaced by the real review comment.
+
+          If no review appears within 5 min, the maintainer's local pipeline
+          may be offline — ping them."
+
+          # --paginate: walk all pages so the marker is found even on
+          # long-discussion PRs (default page size is 30). Addresses
+          # code_review feedback on PR #1 (pipe-298721cf).
+          existing=$(gh api --paginate repos/$REPO/issues/$PR/comments \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH repos/$REPO/issues/comments/$existing -f body="$BODY"
           else
-            echo "has_key=true" >> "$GITHUB_OUTPUT"
+            gh pr comment $PR --repo $REPO --body "$BODY"
           fi
-
-      - uses: actions/checkout@v4
-        if: steps.secret_check.outputs.has_key == 'true'
-
-      # ---------- Toolchain ----------
-      - uses: actions/setup-node@v4
-        if: steps.secret_check.outputs.has_key == 'true'
-        with:
-          node-version: "22"
-
-      - uses: actions/setup-python@v5
-        if: steps.secret_check.outputs.has_key == 'true'
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install Claude CLI
-        if: steps.secret_check.outputs.has_key == 'true'
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Install pipeline + gateway deps
-        if: steps.secret_check.outputs.has_key == 'true'
-        run: |
-          pip install -e .
-          pip install fastapi "uvicorn[standard]" python-dotenv websockets
-
-      # ---------- Gateway ----------
-      - name: Start claude-cli-api gateway
-        if: steps.secret_check.outputs.has_key == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          cd claude-cli-api
-          PORT=8200 PLANNER_BACKEND=claude nohup python main.py > /tmp/gateway.log 2>&1 &
-          # Wait until /healthz is alive (max 30s)
-          for i in $(seq 1 30); do
-            curl -fsS http://localhost:8200/healthz >/dev/null 2>&1 && break
-            sleep 1
-          done
-          curl -fsS http://localhost:8200/healthz || (cat /tmp/gateway.log; exit 1)
-
-      # ---------- Pipeline ----------
-      - name: Build PR event
-        if: steps.secret_check.outputs.has_key == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/build_pr_event.py > /tmp/event.json
-
-      - name: Run pipeline
-        if: steps.secret_check.outputs.has_key == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CLAUDE_CLI_API_URL: http://localhost:8200
-          AICICD_FORCE_PROVIDER: claude       # CI lane: claude only (no Gemini auth in CI)
-          AUTO_APPROVE: "true"                 # no human in CI to approve
-          AICICD_PIPELINE_BUDGET_USD: "0.50"   # tighter than prod default of $1
-          CLAUDE_CALL_TIMEOUT: "300"
-        run: |
-          # `|| true` — we still want to post the result even if pipeline blocks.
-          ai-cicd run /tmp/event.json || true
-
-      - name: Post review comment
-        if: steps.secret_check.outputs.has_key == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/post_pr_review.py
-
-      - name: Upload audit + result artifacts
-        if: steps.secret_check.outputs.has_key == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-cicd-pipeline-${{ github.event.pull_request.number }}
-          path: |
-            logs/
-            data/runs/
-          if-no-files-found: warn
-          retention-days: 14
-
-      # If the pipeline returned `blocked` we want CI red — but the comment is
-      # already up so reviewers see the why before they see the red ✗.
-      - name: Reflect verdict to CI status
-        if: steps.secret_check.outputs.has_key == 'true'
-        run: |
-          latest=$(ls -t logs/pipe-*.json 2>/dev/null | head -1)
-          if [ -z "$latest" ]; then
-            echo "no pipeline result found"; exit 0
-          fi
-          status=$(python -c "import json,sys;print(json.load(open('$latest'))['final_status'])")
-          echo "Pipeline final_status=$status"
-          case "$status" in
-            approved|needs_human) exit 0 ;;
-            *)                    exit 1 ;;
-          esac
