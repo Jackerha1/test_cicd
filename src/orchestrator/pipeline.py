@@ -210,9 +210,12 @@ async def _pr_review_flow(event: Event, ctx, verdict) -> PipelineResult:
     comment = proxy.call(
         pipeline_id=event.pipeline_id, agent="orchestrator", action="comment_pr",
         risk_level=verdict.risk_level,
-        params={"pr_number": event.number, "body": summary},
+        params={"pr_number": event.number, "body": summary, "repo": event.repo},
     )
-    result.tool_calls.append({"action": "comment_pr", "ok": comment.ok, "decision": comment.decision})
+    result.tool_calls.append({
+        "action": "comment_pr", "ok": comment.ok, "decision": comment.decision,
+        "github": (comment.output or {}).get("github") if comment.ok else None,
+    })
 
     # 7. Decide final status
     v = (validation.output or {}).get("verdict") if validation.ok else "block"

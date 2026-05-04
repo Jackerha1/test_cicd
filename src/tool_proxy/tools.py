@@ -64,12 +64,73 @@ def open_pr(*, pipeline_id: str, title: str, body: str, branch: str, base: str =
     return rec
 
 
-def comment_pr(*, pipeline_id: str, body: str, pr_number: int | None = None) -> dict:
+_GH_COMMENT_MARKER = "<!-- ai-cicd-review -->"
+
+
+def _post_or_update_github_comment(repo: str, pr_number: int, body: str) -> dict:
+    """Find existing AI-CICD comment on the PR (by hidden marker) and update it,
+    or create a new one. Idempotent — multiple pipeline runs won't stack comments.
+
+    Activates only when GITHUB_TOKEN env is set. Errors don't fail the pipeline:
+    posting is best-effort, the audit log + data/runs are the source of truth.
+    """
+    import os
+    import httpx
+
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return {"skipped": "GITHUB_TOKEN not set"}
+
+    body_with_marker = body if _GH_COMMENT_MARKER in body else f"{_GH_COMMENT_MARKER}\n{body}"
+    headers = {
+        "Accept":               "application/vnd.github+json",
+        "Authorization":        f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    base = f"https://api.github.com/repos/{repo}"
+
+    with httpx.Client(headers=headers, timeout=15) as cli:
+        r = cli.get(f"{base}/issues/{pr_number}/comments", params={"per_page": 100})
+        r.raise_for_status()
+        existing = next(
+            (c for c in r.json() if _GH_COMMENT_MARKER in (c.get("body") or "")),
+            None,
+        )
+        if existing:
+            r = cli.patch(f"{base}/issues/comments/{existing['id']}",
+                          json={"body": body_with_marker})
+            r.raise_for_status()
+            return {"comment_url": r.json().get("html_url"), "updated": True,
+                    "comment_id": existing["id"]}
+        r = cli.post(f"{base}/issues/{pr_number}/comments",
+                     json={"body": body_with_marker})
+        r.raise_for_status()
+        return {"comment_url": r.json().get("html_url"), "updated": False,
+                "comment_id": r.json().get("id")}
+
+
+def comment_pr(*, pipeline_id: str, body: str, pr_number: int | None = None,
+               repo: str | None = None) -> dict:
+    """Record the comment locally AND, if GITHUB_TOKEN + repo + pr_number are
+    all present, post (or update) the comment on the actual GitHub PR.
+
+    Idempotent: hidden marker `<!-- ai-cicd-review -->` lets us update in place
+    instead of stacking on every push.
+    """
+    # Always record locally — source of truth even if GitHub posting fails.
     p = _pipe_dir(pipeline_id) / "comments.jsonl"
-    rec = {"ts": time.time(), "pr": pr_number, "body": body}
+    rec = {"ts": time.time(), "pr": pr_number, "repo": repo, "body": body}
     with p.open("a") as f:
         f.write(json.dumps(rec) + "\n")
-    return {"posted": True, "preview": body[:200]}
+
+    gh_result: dict | None = None
+    if repo and pr_number:
+        try:
+            gh_result = _post_or_update_github_comment(repo, pr_number, body)
+        except Exception as exc:                  # noqa: BLE001 — best-effort
+            gh_result = {"error": str(exc)[:200]}
+
+    return {"posted": True, "preview": body[:200], "github": gh_result}
 
 
 def merge_pr(*, pipeline_id: str, pr_number: int, strategy: str = "squash") -> dict:

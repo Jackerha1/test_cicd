@@ -33,6 +33,10 @@ services:
       # Optional: force a single provider for ALL agents (testing / incident).
       - AICICD_FORCE_PROVIDER=${AICICD_FORCE_PROVIDER:-}
       - AICICD_FORCE_MODEL=${AICICD_FORCE_MODEL:-}
+      # Real PR commenting + diff fetch. Without this, comment_pr is simulated
+      # (writes to artifacts/<id>/comments.jsonl only). Set in .env from
+      # `gh auth token` or a fine-grained PAT with pull-request: write.
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     extra_hosts:
       # Linux Docker doesn't auto-create host.docker.internal — explicit map.
       - "host.docker.internal:host-gateway"

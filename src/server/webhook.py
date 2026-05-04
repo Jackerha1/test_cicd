@@ -245,6 +245,38 @@ def _normalize(provider: str, payload: dict) -> Event:
     raise HTTPException(status_code=404, detail=f"unknown provider {provider!r}")
 
 
+def _fetch_pr_diff_and_files(repo: str, pr_number: int) -> tuple[str, list[str]]:
+    """Pull the unified diff + changed-files list for a PR via GitHub REST API.
+
+    Used by the webhook handler because GitHub's PR webhook payload omits these.
+    No-op (returns empty) if GITHUB_TOKEN isn't set — the pipeline still runs,
+    just with empty diff (agents will note it).
+    """
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return "", []
+    base = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
+    common = {
+        "Authorization":        f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    diff = ""
+    files: list[str] = []
+    try:
+        with httpx.Client(timeout=30) as cli:
+            r = cli.get(base, headers={**common, "Accept": "application/vnd.github.v3.diff"})
+            if r.status_code == 200:
+                diff = r.text
+            r2 = cli.get(f"{base}/files",
+                         headers={**common, "Accept": "application/vnd.github+json"},
+                         params={"per_page": 300})
+            if r2.status_code == 200:
+                files = [f["filename"] for f in r2.json()]
+    except httpx.HTTPError:
+        pass
+    return diff, files
+
+
 def _normalize_github(p: dict) -> Event:
     """Map a (subset of) GitHub webhook to the normalized Event shape."""
     if "issue" in p and "comment" not in p:
@@ -259,13 +291,20 @@ def _normalize_github(p: dict) -> Event:
         )
     if "pull_request" in p:
         pr = p["pull_request"]
+        repo = p["repository"]["full_name"]
+        number = pr["number"]
+        # GitHub PR webhook payload doesn't include diff or files_changed.
+        # Fetch them ourselves with GITHUB_TOKEN so the agents have something
+        # to review. Best-effort — empty diff/files are valid degraded mode.
+        diff, files_changed = _fetch_pr_diff_and_files(repo, number)
         return Event(
             kind="pull_request", action=p.get("action", "opened"),
-            repo=p["repository"]["full_name"], number=pr["number"],
+            repo=repo, number=number,
             title=pr.get("title", ""), body=pr.get("body", ""),
             author=pr.get("user", {}).get("login", "unknown"),
             branch=pr["head"]["ref"], base_branch=pr["base"]["ref"],
-            files_changed=[],     # webhook doesn't include diff; populate via gh API in real deploy
+            files_changed=files_changed,
+            diff=diff,
             labels=[l["name"] for l in pr.get("labels", [])],
             raw=p,
         )
