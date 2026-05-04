@@ -1,0 +1,51 @@
+# crud-demo tests — runs on PRs that touch the demo project.
+#
+# Karpathy reflex: deterministic gates first, AI review is additional.
+# Tests must pass before the AI agents waste a token reviewing.
+
+name: crud-demo tests
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "crud-demo/**"
+      - ".github/workflows/crud-demo-tests.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "crud-demo/**"
+      - ".github/workflows/crud-demo-tests.yml"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: crud-demo/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: crud-demo/backend/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: crud-demo/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crud-demo/frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test -- --run
