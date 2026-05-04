@@ -43,8 +43,16 @@ def _gh(*args: str, body: str | None = None) -> str:
 
 
 def _find_existing_comment(repo: str, pr: int) -> int | None:
-    raw = _gh("api", f"repos/{repo}/issues/{pr}/comments")
-    for c in json.loads(raw or "[]"):
+    # --paginate walks all comment pages so the marker is found on
+    # long-discussion PRs (default GitHub page size is 30).
+    # Addresses code_review feedback on PR #1 (pipe-298721cf).
+    raw = _gh("api", "--paginate", f"repos/{repo}/issues/{pr}/comments")
+    # `gh --paginate` concatenates JSON arrays — split on `][`.
+    rows: list = []
+    for chunk in raw.replace("][", "]<<>>[").split("<<>>"):
+        if chunk.strip():
+            rows.extend(json.loads(chunk))
+    for c in rows:
         if MARKER in (c.get("body") or ""):
             return c["id"]
     return None

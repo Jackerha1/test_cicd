@@ -64,7 +64,10 @@ jobs:
           If no review appears within 5 min, the maintainer's local pipeline
           may be offline — ping them."
 
-          existing=$(gh api repos/$REPO/issues/$PR/comments \
+          # --paginate: walk all pages so the marker is found even on
+          # long-discussion PRs (default page size is 30). Addresses
+          # code_review feedback on PR #1 (pipe-298721cf).
+          existing=$(gh api --paginate repos/$REPO/issues/$PR/comments \
                        --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -1)
           if [ -n "$existing" ]; then
             gh api -X PATCH repos/$REPO/issues/comments/$existing -f body="$BODY"
