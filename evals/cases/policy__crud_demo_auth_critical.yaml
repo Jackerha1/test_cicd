@@ -1,0 +1,13 @@
+# Regression test: edits to crud-demo/backend/app/auth.py must be classified
+# critical by the auth_payment_critical rule.
+# If this regresses, the AI-CICD pipeline silently downgraded auth-touching
+# PRs in our pilot codebase.
+
+name: policy__crud_demo_auth_critical
+target: policy_engine
+event: examples/crud_demo_auth_pr.json
+expect:
+  rule_id:                auth_payment_critical
+  risk_level:             critical
+  require_human_approval: true
+  block:                  false           # critical but not block — needs human review

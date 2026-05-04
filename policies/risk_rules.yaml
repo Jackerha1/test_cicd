@@ -37,12 +37,19 @@ rules:
   - id: auth_payment_critical
     match:
       paths:
+        # AI-CICD pipeline source (this repo's own auth/payment dirs).
         - "src/auth/**"
         - "src/payment/**"
         - "src/billing/**"
         - "src/permissions/**"
+        # crud-demo target codebase — auth + JWT + password handling.
+        - "crud-demo/backend/app/auth.py"
+        - "crud-demo/backend/app/routes/auth.py"
+        - "crud-demo/backend/tests/test_auth_routes.py"
+        # generic catch-alls for any nested repo we may add later.
         - "**/auth/**"
         - "**/payment/**"
+        - "**/billing/**"
     risk_level: critical
     require_human_approval: true
     reason: "Touches authentication, payment, or permissions surface."
@@ -53,9 +60,16 @@ rules:
         - ".github/workflows/**"
         - ".gitlab-ci.yml"
         - "Dockerfile*"
+        - "**/Dockerfile*"
         - "docker-compose*.yml"
+        - "**/docker-compose*.yml"
         - "infra/**"
         - "deploy/**"
+        - "Makefile"
+        # crud-demo's deployment surface
+        - "crud-demo/docker-compose.yml"
+        - "crud-demo/backend/Dockerfile"
+        - "crud-demo/frontend/Dockerfile"
     risk_level: high
     require_human_approval: true
     reason: "Touches CI/CD or deployment infrastructure."
@@ -64,11 +78,14 @@ rules:
     match:
       paths:
         - "package.json"
+        - "**/package.json"
         - "package-lock.json"
+        - "**/package-lock.json"
         - "pnpm-lock.yaml"
         - "yarn.lock"
         - "requirements*.txt"
         - "pyproject.toml"
+        - "**/pyproject.toml"
         - "poetry.lock"
         - "Pipfile*"
         - "go.mod"
